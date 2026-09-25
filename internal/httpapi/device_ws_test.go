@@ -8,12 +8,12 @@ import (
 
 func TestDeviceSignalHubPublishesWithoutDurableState(t *testing.T) {
 	hub := newDeviceSignalHub()
-	signals, unsubscribe := hub.subscribe("device-1")
+	subscriber, unsubscribe := hub.subscribe("device-1")
 	defer unsubscribe()
 
 	hub.publish("device-1", deviceSignal{Type: "commands_available"})
 	select {
-	case signal := <-signals:
+	case signal := <-subscriber.wake:
 		if signal.Type != "commands_available" {
 			t.Fatalf("signal type = %q", signal.Type)
 		}
@@ -24,7 +24,7 @@ func TestDeviceSignalHubPublishesWithoutDurableState(t *testing.T) {
 	// Publishing for another device must not wake this subscriber.
 	hub.publish("device-2", deviceSignal{Type: "commands_available"})
 	select {
-	case signal := <-signals:
+	case signal := <-subscriber.wake:
 		t.Fatalf("unexpected cross-device signal: %+v", signal)
 	case <-time.After(20 * time.Millisecond):
 	}
@@ -57,7 +57,7 @@ func TestDeviceMutationSignal(t *testing.T) {
 
 func TestDeviceSignalHubCoalescesSlowConsumer(t *testing.T) {
 	hub := newDeviceSignalHub()
-	signals, unsubscribe := hub.subscribe("device-1")
+	subscriber, unsubscribe := hub.subscribe("device-1")
 	defer unsubscribe()
 
 	for i := 0; i < 100; i++ {
@@ -67,13 +67,33 @@ func TestDeviceSignalHubCoalescesSlowConsumer(t *testing.T) {
 	count := 0
 	for {
 		select {
-		case <-signals:
+		case <-subscriber.wake:
 			count++
 		default:
-			if count == 0 || count > 2 {
-				t.Fatalf("coalesced signal count = %d", count)
+			if count != 1 {
+				t.Fatalf("coalesced signal count = %d, want 1", count)
 			}
 			return
 		}
+	}
+}
+
+func TestDeviceSignalHubNeverDropsReauthentication(t *testing.T) {
+	hub := newDeviceSignalHub()
+	subscriber, unsubscribe := hub.subscribe("device-1")
+	defer unsubscribe()
+
+	// Fill the ordinary wake queue and keep flooding it. Reauthentication uses
+	// a separate close-only channel and must still be observable immediately.
+	for i := 0; i < 100; i++ {
+		hub.publish("device-1", deviceSignal{Type: "commands_available"})
+	}
+	hub.publish("device-1", deviceSignal{Type: "reauth_required"})
+	hub.publish("device-1", deviceSignal{Type: "reauth_required"})
+
+	select {
+	case <-subscriber.reauth:
+	case <-time.After(time.Second):
+		t.Fatal("reauthentication signal was lost behind ordinary wake-ups")
 	}
 }
