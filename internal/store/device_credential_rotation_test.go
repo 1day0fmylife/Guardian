@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,7 +67,7 @@ func TestRotateDeviceCredentialHashAtomicallyCutsOver(t *testing.T) {
 	claim, oldSecret, oldPrincipal := enrollCredentialRotationDevice(t, st, "success")
 
 	newSecret := "gdn_d_new-device-owned-secret-success"
-	credential, err := st.RotateDeviceCredentialHash(ctx, oldPrincipal, security.HashToken(newSecret))
+	credential, err := st.RotateDeviceCredentialHash(ctx, oldPrincipal, strings.ToUpper(security.HashToken(newSecret)))
 	if err != nil {
 		t.Fatalf("RotateDeviceCredentialHash: %v", err)
 	}
@@ -85,8 +86,6 @@ func TestRotateDeviceCredentialHashAtomicallyCutsOver(t *testing.T) {
 		t.Fatalf("new principal = %+v, credential = %+v", newPrincipal, credential)
 	}
 
-	// A stale concurrent request authenticated with the old credential cannot
-	// revoke or replace the credential that already won the cutover.
 	if _, err := st.RotateDeviceCredentialHash(ctx, oldPrincipal, security.HashToken("gdn_d_stale-replacement")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale rotation error = %v, want ErrConflict", err)
 	}

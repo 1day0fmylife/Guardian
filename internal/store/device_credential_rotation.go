@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
 )
@@ -17,13 +16,14 @@ import (
 // concurrent or repeated request using an already-revoked credential cannot
 // revoke the newly installed credential.
 func (s *Store) RotateDeviceCredentialHash(ctx context.Context, principal domain.DevicePrincipal, tokenHash string) (domain.DeviceCredential, error) {
-	tokenHash = strings.TrimSpace(tokenHash)
 	if principal.Suspended || principal.Status != "active" {
 		return domain.DeviceCredential{}, ErrConflict
 	}
-	if err := validateDeviceCredentialHash(tokenHash); err != nil {
+	normalizedHash, err := normalizeDeviceCredentialHash(tokenHash)
+	if err != nil {
 		return domain.DeviceCredential{}, err
 	}
+	tokenHash = normalizedHash
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -38,7 +38,11 @@ func (s *Store) RotateDeviceCredentialHash(ctx context.Context, principal domain
 	if err != nil {
 		return domain.DeviceCredential{}, fmt.Errorf("revoke current device credential: %w", err)
 	}
-	if n, err := result.RowsAffected(); err == nil && n == 0 {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.DeviceCredential{}, fmt.Errorf("inspect revoked device credential rows: %w", err)
+	}
+	if affected != 1 {
 		return domain.DeviceCredential{}, ErrConflict
 	}
 

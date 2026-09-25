@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestManagedEnrollmentAcceptsDeviceCredentialHashAndRotationRetry(t *testing
 	}
 
 	deviceCredential := "gdn_d_device-generated-secret-that-is-persisted-before-enrollment"
-	credentialHash := security.HashToken(deviceCredential)
+	credentialHash := strings.ToUpper(security.HashToken(deviceCredential))
 	claim, err := st.ClaimManagedEnrollment(ctx, issued.Token, domain.EnrollmentClaim{
 		DeviceUUID: "managed-device-hash-1", DeviceName: "ArlanPhone Hash Credential",
 		PublicKey: testWGKey(32), DeviceCredentialHash: credentialHash,
