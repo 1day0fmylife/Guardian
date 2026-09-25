@@ -66,7 +66,8 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 	nextRevision := currentRevision + 1
 	result, err := tx.ExecContext(ctx, s.q(`
 		UPDATE wireguard_peers
-		SET public_key = ?, config_revision = ?, observed_state = 'unknown', updated_at = ?
+		SET public_key = ?, config_revision = ?, observed_state = 'unknown',
+		    reconcile_state = 'pending', reconcile_error = '', updated_at = ?
 		WHERE id = ? AND config_revision = ? AND revoked_at IS NULL
 	`), publicKey, nextRevision, nowText(), peerID, currentRevision)
 	if err != nil {

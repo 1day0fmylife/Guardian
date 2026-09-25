@@ -148,4 +148,38 @@ func TestManagedEnrollmentDeviceChannel(t *testing.T) {
 	if _, err := st.DevicePrincipalByCredential(ctx, security.HashToken(rotated.Token)); err != nil {
 		t.Fatalf("new credential auth: %v", err)
 	}
+
+	revokeCommand, err := st.BeginDeviceVPNRevocation(ctx, claim.Device.ID)
+	if err != nil {
+		t.Fatalf("BeginDeviceVPNRevocation: %v", err)
+	}
+	if revokeCommand.Type != "disconnect" {
+		t.Fatalf("revoke command type = %q", revokeCommand.Type)
+	}
+	revokingPrincipal, err := st.DevicePrincipalByCredential(ctx, security.HashToken(rotated.Token))
+	if err != nil {
+		t.Fatalf("revoking device management auth: %v", err)
+	}
+	if !revokingPrincipal.Suspended || revokingPrincipal.Status != "revoking" {
+		t.Fatalf("unexpected revoking principal: %+v", revokingPrincipal)
+	}
+	if _, err := st.ManagedConfigForDevice(ctx, claim.Device.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("config after revoke error = %v, want ErrNotFound", err)
+	}
+	if err := st.CompleteDeviceVPNRevocation(ctx, claim.Device.ID, 2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale revocation completion error = %v, want ErrConflict", err)
+	}
+	if err := st.CompleteDeviceVPNRevocation(ctx, claim.Device.ID, 3); err != nil {
+		t.Fatalf("CompleteDeviceVPNRevocation: %v", err)
+	}
+	if _, err := st.DevicePrincipalByCredential(ctx, security.HashToken(rotated.Token)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("credential after finalized revoke error = %v, want ErrNotFound", err)
+	}
+	var leaseStatus string
+	if err := st.DB().QueryRowContext(ctx, sQuery(st, "SELECT status FROM address_leases WHERE device_id = ?"), claim.Device.ID).Scan(&leaseStatus); err != nil {
+		t.Fatalf("read finalized lease: %v", err)
+	}
+	if leaseStatus != "released" {
+		t.Fatalf("finalized lease status = %q, want released", leaseStatus)
+	}
 }

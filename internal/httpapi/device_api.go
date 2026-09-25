@@ -40,6 +40,7 @@ func (s *Server) ManagementHandler() http.Handler {
 	mux.Handle("GET /api/v1/devices/{id}/telemetry/latest", wrap(s.require(rbac.DevicesRead, s.adminLatestTelemetry)))
 	mux.Handle("POST /api/v1/devices/{id}/credentials/revoke", wrap(s.require(rbac.DevicesUpdate, s.adminRevokeDeviceCredentials)))
 	mux.Handle("POST /api/v1/devices/{id}/suspend", wrap(s.require(rbac.DevicesUpdate, s.adminSuspendDevice)))
+	mux.Handle("POST /api/v1/devices/{id}/revoke", wrap(s.require(rbac.DevicesDelete, s.adminRevokeDeviceVPN)))
 
 	mux.Handle("/", s.Handler())
 	return mux
@@ -275,6 +276,22 @@ func (s *Server) adminSuspendDevice(w http.ResponseWriter, r *http.Request, prin
 	}
 	_ = s.audit(r, principal.UserID, "device.suspend", "device", deviceID, map[string]any{"disconnect_command_id": cmd.ID})
 	writeJSON(w, http.StatusAccepted, map[string]any{"device_id": deviceID, "disconnect_command": cmd})
+}
+
+func (s *Server) adminRevokeDeviceVPN(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	deviceID := r.PathValue("id")
+	cmd, err := s.store.BeginDeviceVPNRevocation(r.Context(), deviceID)
+	if err != nil {
+		writeManagementStoreError(w, err)
+		return
+	}
+	_ = s.audit(r, principal.UserID, "device.vpn.revoke", "device", deviceID, map[string]any{"disconnect_command_id": cmd.ID})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"device_id":          deviceID,
+		"status":             "revoking",
+		"disconnect_command": cmd,
+		"reconcile_pending":  true,
+	})
 }
 
 func commandPermission(commandType string) string {
