@@ -12,6 +12,7 @@ import (
 
 	"github.com/1day0fmylife/Guardian/internal/config"
 	"github.com/1day0fmylife/Guardian/internal/httpapi"
+	"github.com/1day0fmylife/Guardian/internal/store"
 )
 
 func main() {
@@ -36,7 +37,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	api := httpapi.New()
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStartup()
+
+	st, err := store.Open(startupCtx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("open database", "error", err)
+		os.Exit(1)
+	}
+	defer st.Close()
+
+	if err := st.Migrate(startupCtx); err != nil {
+		logger.Error("run database migrations", "error", err)
+		os.Exit(1)
+	}
+	if err := st.SeedRBAC(startupCtx); err != nil {
+		logger.Error("seed RBAC", "error", err)
+		os.Exit(1)
+	}
+
+	api := httpapi.New(st, cfg.PublicURL, cfg.SessionTTL)
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api.Handler(),
@@ -50,7 +70,12 @@ func main() {
 	defer stop()
 
 	go func() {
-		logger.Info("guardian server started", "listen", cfg.ListenAddr, "environment", cfg.Environment)
+		logger.Info("guardian server started",
+			"listen", cfg.ListenAddr,
+			"environment", cfg.Environment,
+			"database", st.Dialect(),
+			"redis_enabled", cfg.RedisURL != "",
+		)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("http server", "error", err)
 			stop()
