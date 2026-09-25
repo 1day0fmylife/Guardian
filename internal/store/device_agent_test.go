@@ -66,6 +66,17 @@ func TestManagedEnrollmentDeviceChannel(t *testing.T) {
 		t.Fatalf("unexpected device principal: %+v", principal)
 	}
 
+	rotatedConfig, err := st.RotateDeviceWireGuardPublicKey(ctx, claim.Device.ID, testWGKey(13), 1)
+	if err != nil {
+		t.Fatalf("RotateDeviceWireGuardPublicKey: %v", err)
+	}
+	if rotatedConfig.ConfigRevision != 2 {
+		t.Fatalf("rotated config revision = %d, want 2", rotatedConfig.ConfigRevision)
+	}
+	if _, err := st.RotateDeviceWireGuardPublicKey(ctx, claim.Device.ID, testWGKey(14), 1); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale key rotation error = %v, want ErrConflict", err)
+	}
+
 	command, err := st.CreateDeviceCommand(ctx, DeviceCommandCreate{
 		DeviceID: claim.Device.ID, Type: "apply-config", Payload: json.RawMessage(`{"revision":1}`), TTL: time.Minute,
 	})

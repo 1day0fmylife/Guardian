@@ -33,6 +33,7 @@ func (s *Server) ManagementHandler() http.Handler {
 	mux.Handle("POST /api/v1/device/commands/{id}/result", wrap(s.requireDevice(false, s.deviceCommandResult)))
 	mux.Handle("POST /api/v1/device/telemetry", wrap(s.requireDevice(false, s.deviceTelemetry)))
 	mux.Handle("POST /api/v1/device/credential/rotate", wrap(s.requireDevice(true, s.deviceRotateCredential)))
+	mux.Handle("POST /api/v1/device/wireguard/rotate-key", wrap(s.requireDevice(true, s.deviceRotateWireGuardKey)))
 
 	mux.Handle("GET /api/v1/devices/{id}/commands", wrap(s.require(rbac.CommandsRead, s.adminListDeviceCommands)))
 	mux.Handle("POST /api/v1/devices/{id}/commands", wrap(s.require(rbac.CommandsCreate, s.adminCreateDeviceCommand)))
@@ -173,6 +174,30 @@ func (s *Server) deviceRotateCredential(w http.ResponseWriter, r *http.Request, 
 	}
 	_ = s.audit(r, "", "device.credential.rotate", "device", principal.DeviceID, nil)
 	writeJSON(w, http.StatusCreated, issued)
+}
+
+type deviceWireGuardKeyRotationRequest struct {
+	PublicKey        string `json:"public_key"`
+	ExpectedRevision int64  `json:"expected_revision"`
+}
+
+func (s *Server) deviceRotateWireGuardKey(w http.ResponseWriter, r *http.Request, principal domain.DevicePrincipal) {
+	var input deviceWireGuardKeyRotationRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	cfg, err := s.store.RotateDeviceWireGuardPublicKey(r.Context(), principal.DeviceID, input.PublicKey, input.ExpectedRevision)
+	if err != nil {
+		if errors.Is(err, security.ErrInvalidWireGuardPublicKey) {
+			writeError(w, http.StatusBadRequest, "invalid_wireguard_public_key", "WireGuard public key is invalid")
+			return
+		}
+		writeManagementStoreError(w, err)
+		return
+	}
+	_ = s.audit(r, "", "wireguard.key.rotate", "device", principal.DeviceID, map[string]any{"config_revision": cfg.ConfigRevision})
+	writeJSON(w, http.StatusAccepted, map[string]any{"wireguard": cfg, "reconcile_pending": true})
 }
 
 type adminCommandCreateRequest struct {
