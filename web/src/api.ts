@@ -79,6 +79,23 @@ export type DeviceCommandList = {
   offset: number
 }
 
+export type AddressPool = {
+  id: string
+  name: string
+  cidr: string
+  gateway?: string
+  dns_servers?: string[]
+  created_at: string
+  updated_at: string
+}
+
+export type AddressPoolCreate = {
+  name: string
+  cidr: string
+  gateway: string
+  dns_servers: string[]
+}
+
 export type VPNProfile = {
   id: string
   name: string
@@ -90,6 +107,16 @@ export type VPNProfile = {
   address_pool_id: string
   created_at: string
   updated_at: string
+}
+
+export type VPNProfileCreate = {
+  name: string
+  server_public_key: string
+  endpoint: string
+  allowed_ips: string[]
+  dns_servers: string[]
+  persistent_keepalive: number
+  address_pool_id: string
 }
 
 export type Enrollment = {
@@ -222,9 +249,24 @@ export async function resumeDevice(deviceId: string) {
   await api.post(`/devices/${encodeURIComponent(deviceId)}/resume`)
 }
 
+export async function listAddressPools() {
+  const { data } = await api.get<{ items: AddressPool[] }>('/address-pools')
+  return data.items
+}
+
+export async function createAddressPool(input: AddressPoolCreate) {
+  const { data } = await api.post<AddressPool>('/address-pools', input)
+  return data
+}
+
 export async function listVPNProfiles() {
   const { data } = await api.get<{ items: VPNProfile[] }>('/vpn-profiles')
   return data.items
+}
+
+export async function createVPNProfile(input: VPNProfileCreate) {
+  const { data } = await api.post<VPNProfile>('/vpn-profiles', input)
+  return data
 }
 
 export async function listEnrollments(limit = 100, offset = 0) {
