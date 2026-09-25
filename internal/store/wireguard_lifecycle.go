@@ -79,7 +79,7 @@ func (s *Store) BeginDeviceVPNRevocation(ctx context.Context, deviceID string) (
 	cmd := domain.DeviceCommand{
 		ID: commandID, DeviceID: deviceID, Type: "disconnect", Status: "pending",
 		IdempotencyKey: "revoke:" + peerID + ":" + fmt.Sprint(nextRevision),
-		Payload: json.RawMessage(`{"reason":"vpn_revoked"}`), Result: json.RawMessage(`{}`),
+		Payload:        json.RawMessage(`{"reason":"vpn_revoked"}`), Result: json.RawMessage(`{}`),
 		CreatedAt: now, ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano),
 	}
 	if _, err := tx.ExecContext(ctx, s.q(`
@@ -155,4 +155,142 @@ func (s *Store) CompleteDeviceVPNRevocation(ctx context.Context, deviceID string
 		return fmt.Errorf("commit revocation completion: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) SuspendDeviceVPNAndQueueDisconnect(ctx context.Context, deviceID string) (domain.DeviceCommand, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("begin device suspension: %w", err)
+	}
+	defer tx.Rollback()
+	now := nowText()
+	result, err := tx.ExecContext(ctx, s.q(`
+		UPDATE devices SET suspended = 1, status = 'suspended', updated_at = ?
+		WHERE id = ? AND status = 'active'
+	`), now, deviceID)
+	if err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("suspend device: %w", err)
+	}
+	if n, err := result.RowsAffected(); err == nil && n == 0 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM devices WHERE id = ?"), deviceID).Scan(&exists); err != nil {
+			return domain.DeviceCommand{}, fmt.Errorf("check suspension device: %w", err)
+		}
+		if exists == 0 {
+			return domain.DeviceCommand{}, ErrNotFound
+		}
+		return domain.DeviceCommand{}, ErrConflict
+	}
+
+	var peerID string
+	var revision int64
+	query := `SELECT id, config_revision FROM wireguard_peers WHERE device_id = ? AND revoked_at IS NULL`
+	if s.dialect == "postgres" {
+		query += " FOR UPDATE"
+	}
+	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &revision); err != nil {
+		if err == sql.ErrNoRows {
+			return domain.DeviceCommand{}, ErrNotFound
+		}
+		return domain.DeviceCommand{}, fmt.Errorf("load peer for suspension: %w", err)
+	}
+	nextRevision := revision + 1
+	if _, err := tx.ExecContext(ctx, s.q(`
+		UPDATE wireguard_peers
+		SET desired_state = 'disconnected', config_revision = ?, reconcile_state = 'pending',
+		    reconcile_error = '', updated_at = ?
+		WHERE id = ? AND config_revision = ?
+	`), nextRevision, now, peerID, revision); err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("set suspended peer desired state: %w", err)
+	}
+
+	id, err := security.NewID()
+	if err != nil {
+		return domain.DeviceCommand{}, err
+	}
+	cmd := domain.DeviceCommand{
+		ID: id, DeviceID: deviceID, Type: "disconnect", Status: "pending",
+		IdempotencyKey: "suspend:" + peerID + ":" + fmt.Sprint(nextRevision),
+		Payload:        json.RawMessage(`{"reason":"device_suspended"}`), Result: json.RawMessage(`{}`),
+		CreatedAt: now, ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano),
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`
+		INSERT INTO device_commands(id, device_id, type, status, idempotency_key, payload, result, created_at, expires_at)
+		VALUES(?, ?, 'disconnect', 'pending', ?, ?, '{}', ?, ?)
+	`), cmd.ID, deviceID, cmd.IdempotencyKey, string(cmd.Payload), cmd.CreatedAt, cmd.ExpiresAt); err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("queue suspend disconnect: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("commit device suspension: %w", err)
+	}
+	return cmd, nil
+}
+
+func (s *Store) ResumeDeviceVPNAndQueueConnect(ctx context.Context, deviceID string) (domain.DeviceCommand, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("begin device resume: %w", err)
+	}
+	defer tx.Rollback()
+	now := nowText()
+	result, err := tx.ExecContext(ctx, s.q(`
+		UPDATE devices SET suspended = 0, status = 'active', updated_at = ?
+		WHERE id = ? AND status = 'suspended'
+	`), now, deviceID)
+	if err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("resume device: %w", err)
+	}
+	if n, err := result.RowsAffected(); err == nil && n == 0 {
+		var exists int
+		if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM devices WHERE id = ?"), deviceID).Scan(&exists); err != nil {
+			return domain.DeviceCommand{}, fmt.Errorf("check resume device: %w", err)
+		}
+		if exists == 0 {
+			return domain.DeviceCommand{}, ErrNotFound
+		}
+		return domain.DeviceCommand{}, ErrConflict
+	}
+
+	var peerID string
+	var revision int64
+	query := `SELECT id, config_revision FROM wireguard_peers WHERE device_id = ? AND revoked_at IS NULL`
+	if s.dialect == "postgres" {
+		query += " FOR UPDATE"
+	}
+	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &revision); err != nil {
+		if err == sql.ErrNoRows {
+			return domain.DeviceCommand{}, ErrNotFound
+		}
+		return domain.DeviceCommand{}, fmt.Errorf("load peer for resume: %w", err)
+	}
+	nextRevision := revision + 1
+	if _, err := tx.ExecContext(ctx, s.q(`
+		UPDATE wireguard_peers
+		SET desired_state = 'connected', config_revision = ?, reconcile_state = 'pending',
+		    reconcile_error = '', updated_at = ?
+		WHERE id = ? AND config_revision = ?
+	`), nextRevision, now, peerID, revision); err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("set resumed peer desired state: %w", err)
+	}
+
+	id, err := security.NewID()
+	if err != nil {
+		return domain.DeviceCommand{}, err
+	}
+	cmd := domain.DeviceCommand{
+		ID: id, DeviceID: deviceID, Type: "connect", Status: "pending",
+		IdempotencyKey: "resume:" + peerID + ":" + fmt.Sprint(nextRevision),
+		Payload:        json.RawMessage(`{"reason":"device_resumed"}`), Result: json.RawMessage(`{}`),
+		CreatedAt: now, ExpiresAt: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339Nano),
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`
+		INSERT INTO device_commands(id, device_id, type, status, idempotency_key, payload, result, created_at, expires_at)
+		VALUES(?, ?, 'connect', 'pending', ?, ?, '{}', ?, ?)
+	`), cmd.ID, deviceID, cmd.IdempotencyKey, string(cmd.Payload), cmd.CreatedAt, cmd.ExpiresAt); err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("queue resume connect: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.DeviceCommand{}, fmt.Errorf("commit device resume: %w", err)
+	}
+	return cmd, nil
 }

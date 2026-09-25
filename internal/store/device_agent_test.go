@@ -113,9 +113,9 @@ func TestManagedEnrollmentDeviceChannel(t *testing.T) {
 		t.Fatalf("unexpected latest telemetry: %+v", latest)
 	}
 
-	disconnect, err := st.SuspendDeviceAndQueueDisconnect(ctx, claim.Device.ID)
+	disconnect, err := st.SuspendDeviceVPNAndQueueDisconnect(ctx, claim.Device.ID)
 	if err != nil {
-		t.Fatalf("SuspendDeviceAndQueueDisconnect: %v", err)
+		t.Fatalf("SuspendDeviceVPNAndQueueDisconnect: %v", err)
 	}
 	if disconnect.Type != "disconnect" {
 		t.Fatalf("suspend command type = %q", disconnect.Type)
@@ -131,8 +131,12 @@ func TestManagedEnrollmentDeviceChannel(t *testing.T) {
 		t.Fatalf("rotate while suspended error = %v, want ErrConflict", err)
 	}
 
-	if err := st.SetDeviceSuspended(ctx, claim.Device.ID, false); err != nil {
-		t.Fatalf("resume: %v", err)
+	resumeCommand, err := st.ResumeDeviceVPNAndQueueConnect(ctx, claim.Device.ID)
+	if err != nil {
+		t.Fatalf("ResumeDeviceVPNAndQueueConnect: %v", err)
+	}
+	if resumeCommand.Type != "connect" {
+		t.Fatalf("resume command type = %q", resumeCommand.Type)
 	}
 	principal, err = st.DevicePrincipalByCredential(ctx, security.HashToken(claim.Credential.Token))
 	if err != nil {
@@ -166,10 +170,10 @@ func TestManagedEnrollmentDeviceChannel(t *testing.T) {
 	if _, err := st.ManagedConfigForDevice(ctx, claim.Device.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("config after revoke error = %v, want ErrNotFound", err)
 	}
-	if err := st.CompleteDeviceVPNRevocation(ctx, claim.Device.ID, 2); !errors.Is(err, ErrConflict) {
+	if err := st.CompleteDeviceVPNRevocation(ctx, claim.Device.ID, 4); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale revocation completion error = %v, want ErrConflict", err)
 	}
-	if err := st.CompleteDeviceVPNRevocation(ctx, claim.Device.ID, 3); err != nil {
+	if err := st.CompleteDeviceVPNRevocation(ctx, claim.Device.ID, 5); err != nil {
 		t.Fatalf("CompleteDeviceVPNRevocation: %v", err)
 	}
 	if _, err := st.DevicePrincipalByCredential(ctx, security.HashToken(rotated.Token)); !errors.Is(err, ErrNotFound) {

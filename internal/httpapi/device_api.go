@@ -40,6 +40,7 @@ func (s *Server) ManagementHandler() http.Handler {
 	mux.Handle("GET /api/v1/devices/{id}/telemetry/latest", wrap(s.require(rbac.DevicesRead, s.adminLatestTelemetry)))
 	mux.Handle("POST /api/v1/devices/{id}/credentials/revoke", wrap(s.require(rbac.DevicesUpdate, s.adminRevokeDeviceCredentials)))
 	mux.Handle("POST /api/v1/devices/{id}/suspend", wrap(s.require(rbac.DevicesUpdate, s.adminSuspendDevice)))
+	mux.Handle("POST /api/v1/devices/{id}/resume", wrap(s.require(rbac.DevicesUpdate, s.adminResumeDevice)))
 	mux.Handle("POST /api/v1/devices/{id}/revoke", wrap(s.require(rbac.DevicesDelete, s.adminRevokeDeviceVPN)))
 
 	mux.Handle("/", s.Handler())
@@ -269,13 +270,24 @@ func (s *Server) adminRevokeDeviceCredentials(w http.ResponseWriter, r *http.Req
 
 func (s *Server) adminSuspendDevice(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	deviceID := r.PathValue("id")
-	cmd, err := s.store.SuspendDeviceAndQueueDisconnect(r.Context(), deviceID)
+	cmd, err := s.store.SuspendDeviceVPNAndQueueDisconnect(r.Context(), deviceID)
 	if err != nil {
 		writeManagementStoreError(w, err)
 		return
 	}
 	_ = s.audit(r, principal.UserID, "device.suspend", "device", deviceID, map[string]any{"disconnect_command_id": cmd.ID})
 	writeJSON(w, http.StatusAccepted, map[string]any{"device_id": deviceID, "disconnect_command": cmd})
+}
+
+func (s *Server) adminResumeDevice(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	deviceID := r.PathValue("id")
+	cmd, err := s.store.ResumeDeviceVPNAndQueueConnect(r.Context(), deviceID)
+	if err != nil {
+		writeManagementStoreError(w, err)
+		return
+	}
+	_ = s.audit(r, principal.UserID, "device.resume", "device", deviceID, map[string]any{"connect_command_id": cmd.ID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"device_id": deviceID, "connect_command": cmd, "reconcile_pending": true})
 }
 
 func (s *Server) adminRevokeDeviceVPN(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
