@@ -16,6 +16,7 @@ import { DeviceDetailPage, DevicesPage } from './devices'
 import { EnrollmentsPage } from './enrollments'
 import './styles.css'
 import './enrollments.css'
+import './commands.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {
