@@ -14,6 +14,7 @@ import (
 const (
 	deviceSignalProtocolVersion = 1
 	deviceSignalKeepalive       = 30 * time.Second
+	deviceSignalWriteTimeout    = 10 * time.Second
 )
 
 type deviceSignal struct {
@@ -116,10 +117,10 @@ func (s *Server) serveDeviceSignals(conn *websocket.Conn, principal domain.Devic
 
 	// Reconnect is itself a wake-up. This closes the race where a command was
 	// committed just before the device established/re-established the socket.
-	if err := websocket.JSON.Send(conn, deviceSignal{Type: "ready", Version: deviceSignalProtocolVersion}); err != nil {
+	if err := sendDeviceSignal(conn, deviceSignal{Type: "ready", Version: deviceSignalProtocolVersion}); err != nil {
 		return
 	}
-	if err := websocket.JSON.Send(conn, deviceSignal{Type: "commands_available"}); err != nil {
+	if err := sendDeviceSignal(conn, deviceSignal{Type: "commands_available"}); err != nil {
 		return
 	}
 
@@ -128,18 +129,27 @@ func (s *Server) serveDeviceSignals(conn *websocket.Conn, principal domain.Devic
 	for {
 		select {
 		case signal := <-signals:
-			if err := websocket.JSON.Send(conn, signal); err != nil {
+			if err := sendDeviceSignal(conn, signal); err != nil {
 				return
 			}
 			if signal.Type == "reauth_required" {
 				return
 			}
 		case <-keepalive.C:
-			if err := websocket.JSON.Send(conn, deviceSignal{Type: "keepalive"}); err != nil {
+			if err := sendDeviceSignal(conn, deviceSignal{Type: "keepalive"}); err != nil {
 				return
 			}
 		}
 	}
+}
+
+func sendDeviceSignal(conn *websocket.Conn, signal deviceSignal) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(deviceSignalWriteTimeout)); err != nil {
+		return err
+	}
+	err := websocket.JSON.Send(conn, signal)
+	_ = conn.SetWriteDeadline(time.Time{})
+	return err
 }
 
 func (s *Server) deviceCommandSignalMiddleware(next http.Handler) http.Handler {
