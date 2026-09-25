@@ -54,6 +54,55 @@ export type DeviceList = {
   offset: number
 }
 
+export type VPNProfile = {
+  id: string
+  name: string
+  server_public_key: string
+  endpoint: string
+  allowed_ips: string[]
+  dns_servers?: string[]
+  persistent_keepalive: number
+  address_pool_id: string
+  created_at: string
+  updated_at: string
+}
+
+export type Enrollment = {
+  id: string
+  name?: string
+  profile_id: string
+  bound_device_uuid?: string
+  bound_serial_number?: string
+  bound_mac?: string
+  expires_at: string
+  consumed_at?: string
+  revoked_at?: string
+  created_at: string
+}
+
+export type EnrollmentList = {
+  items: Enrollment[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type IssuedEnrollment = {
+  enrollment: Enrollment
+  token: string
+  provisioning_uri: string
+  claim_url: string
+}
+
+export type EnrollmentCreate = {
+  name: string
+  profile_id: string
+  bound_device_uuid: string
+  bound_serial_number: string
+  bound_mac: string
+  ttl_seconds: number
+}
+
 export const api = axios.create({
   baseURL: '/api/v1',
   timeout: 10_000,
@@ -123,4 +172,23 @@ export async function getLatestTelemetry(deviceId: string): Promise<DeviceTeleme
     if (axios.isAxiosError(error) && error.response?.status === 404) return null
     throw error
   }
+}
+
+export async function listVPNProfiles() {
+  const { data } = await api.get<{ items: VPNProfile[] }>('/vpn-profiles')
+  return data.items
+}
+
+export async function listEnrollments(limit = 100, offset = 0) {
+  const { data } = await api.get<EnrollmentList>('/enrollments', { params: { limit, offset } })
+  return data
+}
+
+export async function createEnrollment(input: EnrollmentCreate) {
+  const { data } = await api.post<IssuedEnrollment>('/enrollments', input)
+  return data
+}
+
+export async function revokeEnrollment(enrollmentId: string) {
+  await api.post(`/enrollments/${encodeURIComponent(enrollmentId)}/revoke`)
 }
