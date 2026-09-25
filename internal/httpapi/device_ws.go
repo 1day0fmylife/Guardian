@@ -22,29 +22,35 @@ type deviceSignal struct {
 	Version int    `json:"version,omitempty"`
 }
 
+type deviceSignalSubscriber struct {
+	wake       chan deviceSignal
+	reauth     chan struct{}
+	reauthOnce sync.Once
+}
+
 type deviceSignalHub struct {
 	mu          sync.RWMutex
-	subscribers map[string]map[chan deviceSignal]struct{}
+	subscribers map[string]map[*deviceSignalSubscriber]struct{}
 }
 
 func newDeviceSignalHub() *deviceSignalHub {
-	return &deviceSignalHub{subscribers: make(map[string]map[chan deviceSignal]struct{})}
+	return &deviceSignalHub{subscribers: make(map[string]map[*deviceSignalSubscriber]struct{})}
 }
 
-func (h *deviceSignalHub) subscribe(deviceID string) (<-chan deviceSignal, func()) {
-	ch := make(chan deviceSignal, 2)
+func (h *deviceSignalHub) subscribe(deviceID string) (*deviceSignalSubscriber, func()) {
+	subscriber := &deviceSignalSubscriber{wake: make(chan deviceSignal, 1), reauth: make(chan struct{})}
 	h.mu.Lock()
 	if h.subscribers[deviceID] == nil {
-		h.subscribers[deviceID] = make(map[chan deviceSignal]struct{})
+		h.subscribers[deviceID] = make(map[*deviceSignalSubscriber]struct{})
 	}
-	h.subscribers[deviceID][ch] = struct{}{}
+	h.subscribers[deviceID][subscriber] = struct{}{}
 	h.mu.Unlock()
 
 	var once sync.Once
-	return ch, func() {
+	return subscriber, func() {
 		once.Do(func() {
 			h.mu.Lock()
-			delete(h.subscribers[deviceID], ch)
+			delete(h.subscribers[deviceID], subscriber)
 			if len(h.subscribers[deviceID]) == 0 {
 				delete(h.subscribers, deviceID)
 			}
@@ -56,12 +62,16 @@ func (h *deviceSignalHub) subscribe(deviceID string) (<-chan deviceSignal, func(
 func (h *deviceSignalHub) publish(deviceID string, signal deviceSignal) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	for ch := range h.subscribers[deviceID] {
+	for subscriber := range h.subscribers[deviceID] {
+		if signal.Type == "reauth_required" {
+			subscriber.reauthOnce.Do(func() { close(subscriber.reauth) })
+			continue
+		}
 		select {
-		case ch <- signal:
+		case subscriber.wake <- signal:
 		default:
-			// Signals are edge-triggered hints. One pending wake-up is enough;
-			// command state itself remains durable in the database.
+			// Ordinary wake-up hints coalesce. Command state itself remains
+			// durable in the database and reconnect also causes an immediate poll.
 		}
 	}
 }
@@ -111,7 +121,7 @@ func (s *Server) deviceWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveDeviceSignals(conn *websocket.Conn, principal domain.DevicePrincipal) {
 	conn.MaxPayloadBytes = 4096
-	signals, unsubscribe := signalHubFor(s).subscribe(principal.DeviceID)
+	subscriber, unsubscribe := signalHubFor(s).subscribe(principal.DeviceID)
 	defer unsubscribe()
 	defer conn.Close()
 
@@ -128,11 +138,11 @@ func (s *Server) serveDeviceSignals(conn *websocket.Conn, principal domain.Devic
 	defer keepalive.Stop()
 	for {
 		select {
-		case signal := <-signals:
+		case <-subscriber.reauth:
+			_ = sendDeviceSignal(conn, deviceSignal{Type: "reauth_required"})
+			return
+		case signal := <-subscriber.wake:
 			if err := sendDeviceSignal(conn, signal); err != nil {
-				return
-			}
-			if signal.Type == "reauth_required" {
 				return
 			}
 		case <-keepalive.C:
