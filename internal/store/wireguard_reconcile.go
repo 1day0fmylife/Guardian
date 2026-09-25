@@ -14,7 +14,7 @@ func (s *Store) ListPendingWireGuardReconciliations(ctx context.Context, limit i
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, s.q(`
-		SELECT id, device_id, profile_id, public_key, assigned_address,
+		SELECT id, device_id, profile_id, public_key, previous_public_key, assigned_address,
 		       desired_state, config_revision, applied_revision, reconcile_state
 		FROM wireguard_peers
 		WHERE reconcile_state IN ('pending', 'error')
@@ -30,7 +30,7 @@ func (s *Store) ListPendingWireGuardReconciliations(ctx context.Context, limit i
 	for rows.Next() {
 		var item domain.WireGuardReconcileItem
 		if err := rows.Scan(&item.PeerID, &item.DeviceID, &item.ProfileID, &item.PublicKey,
-			&item.AssignedAddress, &item.DesiredState, &item.ConfigRevision,
+			&item.PreviousPublicKey, &item.AssignedAddress, &item.DesiredState, &item.ConfigRevision,
 			&item.AppliedRevision, &item.ReconcileState); err != nil {
 			return nil, fmt.Errorf("scan pending WireGuard reconciliation: %w", err)
 		}
@@ -80,7 +80,7 @@ func (s *Store) MarkWireGuardPeerApplied(ctx context.Context, peerID string, exp
 	result, err := tx.ExecContext(ctx, s.q(`
 		UPDATE wireguard_peers
 		SET reconcile_state = 'applied', applied_revision = ?, reconcile_error = '',
-		    reconciled_at = ?, updated_at = ?
+		    previous_public_key = '', reconciled_at = ?, updated_at = ?
 		WHERE id = ? AND config_revision = ?
 	`), expectedRevision, now, now, peerID, expectedRevision)
 	if err != nil {
