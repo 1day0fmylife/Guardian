@@ -168,14 +168,25 @@ func (s *Server) deviceTelemetry(w http.ResponseWriter, r *http.Request, princip
 	writeJSON(w, http.StatusAccepted, telemetry)
 }
 
+type deviceCredentialRotationRequest struct {
+	CredentialHash string `json:"credential_hash"`
+}
+
 func (s *Server) deviceRotateCredential(w http.ResponseWriter, r *http.Request, principal domain.DevicePrincipal) {
-	issued, err := s.store.RotateDeviceCredential(r.Context(), principal)
+	var input deviceCredentialRotationRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	credential, err := s.store.RotateDeviceCredentialHash(r.Context(), principal, input.CredentialHash)
 	if err != nil {
 		writeManagementStoreError(w, err)
 		return
 	}
-	_ = s.audit(r, "", "device.credential.rotate", "device", principal.DeviceID, nil)
-	writeJSON(w, http.StatusCreated, issued)
+	_ = s.audit(r, "", "device.credential.rotate", "device", principal.DeviceID, map[string]any{
+		"credential_id": credential.ID,
+	})
+	writeJSON(w, http.StatusCreated, map[string]any{"credential": credential})
 }
 
 type deviceWireGuardKeyRotationRequest struct {
