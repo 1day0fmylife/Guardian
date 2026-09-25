@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
 	"github.com/1day0fmylife/Guardian/internal/security"
-	"github.com/1day0fmylife/Guardian/internal/store"
 	"golang.org/x/net/websocket"
 )
 
@@ -79,9 +77,10 @@ func signalHubFor(server *Server) *deviceSignalHub {
 // contain commands, credentials, configuration, or private key material.
 func (s *Server) WebSocketManagementHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/device/ws", s.deviceWebSocket)
+	wsHandler := s.requestIDMiddleware(s.securityHeaders(http.HandlerFunc(s.deviceWebSocket)))
+	mux.Handle("GET /api/v1/device/ws", wsHandler)
 	mux.Handle("/", s.deviceCommandSignalMiddleware(s.ManagementHandler()))
-	return s.requestIDMiddleware(s.securityHeaders(mux))
+	return mux
 }
 
 func (s *Server) deviceWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +98,8 @@ func (s *Server) deviceWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wsServer := websocket.Server{
+		// Guardian device clients are not browsers and do not send Origin. The
+		// authenticated Guardian-Device credential above is the trust boundary.
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 		Handler: func(conn *websocket.Conn) {
 			s.serveDeviceSignals(conn, principal)
@@ -179,39 +180,18 @@ func deviceMutationSignal(method, requestPath string) (deviceID, signalType stri
 		return "", "", false
 	}
 	parts := strings.Split(strings.Trim(requestPath, "/"), "/")
-	if len(parts) != 5 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "devices" || strings.TrimSpace(parts[3]) == "" {
+	if len(parts) < 5 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "devices" || strings.TrimSpace(parts[3]) == "" {
 		return "", "", false
 	}
 	deviceID = parts[3]
-	switch parts[4] {
-	case "commands", "suspend", "resume", "revoke":
-		return deviceID, "commands_available", true
-	case "credentials":
-		// Credential revocation uses /devices/{id}/credentials/revoke and has an
-		// extra path component, so it is handled below.
-		return "", "", false
-	default:
-		return "", "", false
+	if len(parts) == 5 {
+		switch parts[4] {
+		case "commands", "suspend", "resume", "revoke":
+			return deviceID, "commands_available", true
+		}
 	}
+	if len(parts) == 6 && parts[4] == "credentials" && parts[5] == "revoke" {
+		return deviceID, "reauth_required", true
+	}
+	return "", "", false
 }
-
-func credentialRevocationSignal(method, requestPath string) (string, bool) {
-	if method != http.MethodPost {
-		return "", false
-	}
-	parts := strings.Split(strings.Trim(requestPath, "/"), "/")
-	if len(parts) == 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "devices" && parts[4] == "credentials" && parts[5] == "revoke" {
-		return parts[3], strings.TrimSpace(parts[3]) != ""
-	}
-	return "", false
-}
-
-func (s *Server) notifyCredentialRevocation(deviceID string) {
-	if strings.TrimSpace(deviceID) == "" {
-		return
-	}
-	signalHubFor(s).publish(deviceID, deviceSignal{Type: "reauth_required"})
-}
-
-var _ = errors.Is
-var _ = store.ErrNotFound
