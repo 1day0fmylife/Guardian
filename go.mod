@@ -7,6 +7,7 @@ toolchain go1.24.13
 require (
 	github.com/jackc/pgx/v5 v5.8.0
 	golang.org/x/crypto v0.48.0
+	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	modernc.org/sqlite v1.46.1
 )
 
