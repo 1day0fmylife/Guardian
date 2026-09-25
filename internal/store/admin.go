@@ -43,23 +43,32 @@ func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	defer rows.Close()
 	var users []domain.User
 	for rows.Next() {
 		var user domain.User
 		var disabled int
 		if err := rows.Scan(&user.ID, &user.Username, &user.DisplayName, &disabled, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		user.Disabled = disabled != 0
-		roles, err := s.userRoles(ctx, user.ID)
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close users: %w", err)
+	}
+	for index := range users {
+		roles, err := s.userRoles(ctx, users[index].ID)
 		if err != nil {
 			return nil, err
 		}
-		user.Roles = roles
-		users = append(users, user)
+		users[index].Roles = roles
 	}
-	return users, rows.Err()
+	return users, nil
 }
 
 func (s *Store) userRoles(ctx context.Context, userID string) ([]string, error) {
@@ -195,23 +204,32 @@ func (s *Store) ListRoles(ctx context.Context) ([]AdminRole, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
-	defer rows.Close()
 	var roles []AdminRole
 	for rows.Next() {
 		var role AdminRole
 		var system int
 		if err := rows.Scan(&role.ID, &role.Name, &role.Description, &system); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		role.System = system != 0
-		permissions, err := s.rolePermissions(ctx, role.ID)
+		roles = append(roles, role)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close roles: %w", err)
+	}
+	for index := range roles {
+		permissions, err := s.rolePermissions(ctx, roles[index].ID)
 		if err != nil {
 			return nil, err
 		}
-		role.Permissions = permissions
-		roles = append(roles, role)
+		roles[index].Permissions = permissions
 	}
-	return roles, rows.Err()
+	return roles, nil
 }
 
 func (s *Store) rolePermissions(ctx context.Context, roleID string) ([]string, error) {
