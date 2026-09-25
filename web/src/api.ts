@@ -54,6 +54,31 @@ export type DeviceList = {
   offset: number
 }
 
+export type DeviceCommandType = 'connect' | 'disconnect' | 'apply-config' | 'rotate-key'
+
+export type DeviceCommand = {
+  id: string
+  device_id: string
+  type: DeviceCommandType
+  status: string
+  idempotency_key: string
+  payload: Record<string, unknown>
+  result?: Record<string, unknown>
+  error_message?: string
+  created_at: string
+  delivered_at?: string
+  acknowledged_at?: string
+  finished_at?: string
+  expires_at: string
+}
+
+export type DeviceCommandList = {
+  items: DeviceCommand[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export type VPNProfile = {
   id: string
   name: string
@@ -172,6 +197,29 @@ export async function getLatestTelemetry(deviceId: string): Promise<DeviceTeleme
     if (axios.isAxiosError(error) && error.response?.status === 404) return null
     throw error
   }
+}
+
+export async function listDeviceCommands(deviceId: string, limit = 50, offset = 0) {
+  const { data } = await api.get<DeviceCommandList>(`/devices/${encodeURIComponent(deviceId)}/commands`, { params: { limit, offset } })
+  return data
+}
+
+export async function createDeviceCommand(deviceId: string, type: DeviceCommandType) {
+  const { data } = await api.post<DeviceCommand>(`/devices/${encodeURIComponent(deviceId)}/commands`, {
+    type,
+    idempotency_key: '',
+    payload: {},
+    ttl_seconds: 300,
+  })
+  return data
+}
+
+export async function suspendDevice(deviceId: string) {
+  await api.post(`/devices/${encodeURIComponent(deviceId)}/suspend`)
+}
+
+export async function resumeDevice(deviceId: string) {
+  await api.post(`/devices/${encodeURIComponent(deviceId)}/resume`)
 }
 
 export async function listVPNProfiles() {
