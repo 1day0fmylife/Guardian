@@ -13,6 +13,7 @@ import {
 import { AuthGate } from './auth'
 import { clearSession, listDevices, logout } from './api'
 import { DeviceDetailPage, DevicesPage } from './devices'
+import { EnrollmentsPage } from './enrollments'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -24,7 +25,7 @@ const queryClient = new QueryClient({
 const navigation = [
   { icon: 'dashboard', label: 'Dashboard', to: '/' },
   { icon: 'devices', label: 'Devices', to: '/devices' },
-  { icon: 'qr_code_2', label: 'Enrollments' },
+  { icon: 'qr_code_2', label: 'Enrollments', to: '/enrollments' },
   { icon: 'vpn_key', label: 'VPN Profiles' },
   { icon: 'lan', label: 'Address Pools' },
   { icon: 'terminal', label: 'Commands' },
@@ -40,7 +41,7 @@ function Root() {
 
 function Shell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const title = pathname.startsWith('/devices') ? 'Devices' : 'Dashboard'
+  const title = pathname.startsWith('/devices') ? 'Devices' : pathname.startsWith('/enrollments') ? 'Enrollments' : 'Dashboard'
   const queryClient = useQueryClient()
   const [dark, setDark] = React.useState(() => {
     const saved = localStorage.getItem('guardian.theme')
@@ -137,7 +138,8 @@ const rootRoute = createRootRoute({ component: Root })
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: Dashboard })
 const devicesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devices', component: DevicesPage })
 const deviceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devices/$deviceId', component: DeviceDetailRoute })
-const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute])
+const enrollmentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/enrollments', component: EnrollmentsPage })
+const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute])
 const router = createRouter({ routeTree })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
