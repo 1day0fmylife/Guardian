@@ -134,11 +134,8 @@ func (s *Store) CompleteDeviceVPNRevocation(ctx context.Context, deviceID string
 	`), revision, now, now, peerID, revision); err != nil {
 		return fmt.Errorf("mark revoked peer reconciled: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, s.q(`
-		UPDATE address_leases SET status = 'released', released_at = ?
-		WHERE device_id = ? AND status = 'revoking'
-	`), now, deviceID); err != nil {
-		return fmt.Errorf("release revoked address lease: %w", err)
+	if err := s.archiveAddressLeaseTx(ctx, tx, deviceID, now, "vpn_revoked"); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, s.q(`
 		UPDATE device_credentials SET revoked_at = ?
