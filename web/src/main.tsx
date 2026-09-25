@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-router'
 import { AuthGate } from './auth'
 import { clearSession, listDevices, logout } from './api'
+import { AuditPage, CommandsPage, RolesPage, SettingsPage, UsersPage } from './admin'
 import { DeviceDetailPage, DevicesPage } from './devices'
 import { EnrollmentsPage } from './enrollments'
 import { AddressPoolsPage, VPNProfilesPage } from './network-config'
@@ -19,6 +20,7 @@ import './styles.css'
 import './enrollments.css'
 import './commands.css'
 import './network-config.css'
+import './admin.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,11 +34,11 @@ const navigation = [
   { icon: 'qr_code_2', label: 'Enrollments', to: '/enrollments' },
   { icon: 'vpn_key', label: 'VPN Profiles', to: '/vpn-profiles' },
   { icon: 'lan', label: 'Address Pools', to: '/address-pools' },
-  { icon: 'terminal', label: 'Commands' },
-  { icon: 'group', label: 'Users' },
-  { icon: 'admin_panel_settings', label: 'Roles' },
-  { icon: 'history', label: 'Audit' },
-  { icon: 'settings', label: 'Settings' },
+  { icon: 'terminal', label: 'Commands', to: '/commands' },
+  { icon: 'group', label: 'Users', to: '/users' },
+  { icon: 'admin_panel_settings', label: 'Roles', to: '/roles' },
+  { icon: 'history', label: 'Audit', to: '/audit' },
+  { icon: 'settings', label: 'Settings', to: '/settings' },
 ] as const
 
 function Root() {
@@ -48,6 +50,11 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith('/enrollments')) return 'Enrollments'
   if (pathname.startsWith('/vpn-profiles')) return 'VPN Profiles'
   if (pathname.startsWith('/address-pools')) return 'Address Pools'
+  if (pathname.startsWith('/commands')) return 'Commands'
+  if (pathname.startsWith('/users')) return 'Users'
+  if (pathname.startsWith('/roles')) return 'Roles'
+  if (pathname.startsWith('/audit')) return 'Audit'
+  if (pathname.startsWith('/settings')) return 'Settings'
   return 'Dashboard'
 }
 
@@ -81,9 +88,6 @@ function Shell() {
         </div>
         <nav>
           {navigation.map((item) => {
-            if (!('to' in item)) {
-              return <button className="nav-item" disabled key={item.label} title="Coming in the next admin UI slices" type="button"><span className="material-symbols-rounded">{item.icon}</span><span>{item.label}</span></button>
-            }
             const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)
             return <Link className={active ? 'nav-item active' : 'nav-item'} key={item.label} to={item.to}><span className="material-symbols-rounded">{item.icon}</span><span>{item.label}</span></Link>
           })}
@@ -152,7 +156,12 @@ const deviceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devic
 const enrollmentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/enrollments', component: EnrollmentsPage })
 const vpnProfilesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vpn-profiles', component: VPNProfilesPage })
 const addressPoolsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/address-pools', component: AddressPoolsPage })
-const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, vpnProfilesRoute, addressPoolsRoute])
+const commandsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/commands', component: CommandsPage })
+const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/users', component: UsersPage })
+const rolesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/roles', component: RolesPage })
+const auditRoute = createRoute({ getParentRoute: () => rootRoute, path: '/audit', component: AuditPage })
+const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsPage })
+const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, vpnProfilesRoute, addressPoolsRoute, commandsRoute, usersRoute, rolesRoute, auditRoute, settingsRoute])
 const router = createRouter({ routeTree })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
