@@ -14,9 +14,11 @@ import { AuthGate } from './auth'
 import { clearSession, listDevices, logout } from './api'
 import { DeviceDetailPage, DevicesPage } from './devices'
 import { EnrollmentsPage } from './enrollments'
+import { AddressPoolsPage, VPNProfilesPage } from './network-config'
 import './styles.css'
 import './enrollments.css'
 import './commands.css'
+import './network-config.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,8 +30,8 @@ const navigation = [
   { icon: 'dashboard', label: 'Dashboard', to: '/' },
   { icon: 'devices', label: 'Devices', to: '/devices' },
   { icon: 'qr_code_2', label: 'Enrollments', to: '/enrollments' },
-  { icon: 'vpn_key', label: 'VPN Profiles' },
-  { icon: 'lan', label: 'Address Pools' },
+  { icon: 'vpn_key', label: 'VPN Profiles', to: '/vpn-profiles' },
+  { icon: 'lan', label: 'Address Pools', to: '/address-pools' },
   { icon: 'terminal', label: 'Commands' },
   { icon: 'group', label: 'Users' },
   { icon: 'admin_panel_settings', label: 'Roles' },
@@ -41,9 +43,16 @@ function Root() {
   return <AuthGate><Shell /></AuthGate>
 }
 
+function pageTitle(pathname: string) {
+  if (pathname.startsWith('/devices')) return 'Devices'
+  if (pathname.startsWith('/enrollments')) return 'Enrollments'
+  if (pathname.startsWith('/vpn-profiles')) return 'VPN Profiles'
+  if (pathname.startsWith('/address-pools')) return 'Address Pools'
+  return 'Dashboard'
+}
+
 function Shell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const title = pathname.startsWith('/devices') ? 'Devices' : pathname.startsWith('/enrollments') ? 'Enrollments' : 'Dashboard'
   const queryClient = useQueryClient()
   const [dark, setDark] = React.useState(() => {
     const saved = localStorage.getItem('guardian.theme')
@@ -85,7 +94,7 @@ function Shell() {
         <header className="topbar">
           <div>
             <div className="eyebrow">Secure access management</div>
-            <h1>{title}</h1>
+            <h1>{pageTitle(pathname)}</h1>
           </div>
           <div className="topbar-actions">
             <button className="icon-button" aria-label="Toggle theme" type="button" onClick={() => setDark((value) => !value)}><span className="material-symbols-rounded">{dark ? 'light_mode' : 'dark_mode'}</span></button>
@@ -141,7 +150,9 @@ const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', com
 const devicesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devices', component: DevicesPage })
 const deviceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devices/$deviceId', component: DeviceDetailRoute })
 const enrollmentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/enrollments', component: EnrollmentsPage })
-const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute])
+const vpnProfilesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vpn-profiles', component: VPNProfilesPage })
+const addressPoolsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/address-pools', component: AddressPoolsPage })
+const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, vpnProfilesRoute, addressPoolsRoute])
 const router = createRouter({ routeTree })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
