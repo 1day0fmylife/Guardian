@@ -1,0 +1,22 @@
+.device-actions-panel { display: grid; gap: 16px; }
+.device-actions-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.device-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.action-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.action-button .material-symbols-rounded { font-size: 18px; }
+.danger-outline { color: var(--danger); border-color: var(--danger-border); }
+.alert.success { color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); background: var(--success-bg); }
+.compact-alert { padding: 10px 12px; }
+.command-history-panel { display: grid; gap: 16px; padding: 0; overflow: hidden; }
+.command-history-panel > .telemetry-header { padding: 20px 22px 0; }
+.command-table { min-width: 900px; }
+.command-name { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-weight: 500; }
+.command-name .material-symbols-rounded { color: var(--muted); font-size: 18px; }
+.command-error { max-width: 360px; color: var(--danger) !important; overflow-wrap: anywhere; }
+.command-result { max-width: 360px; overflow-wrap: anywhere; }
+.inline-loading { padding: 0 22px 20px; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 620px) {
+  .device-actions-heading { flex-direction: column; }
+  .device-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .action-button { width: 100%; }
+}

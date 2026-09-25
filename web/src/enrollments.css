@@ -1,0 +1,122 @@
+.enrollment-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, .9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.form-grid {
+  display: grid;
+  gap: 14px;
+  padding-top: 16px;
+}
+
+.field-label select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.field-label select:focus {
+  border-color: var(--muted);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 12%, transparent);
+}
+
+.form-section-label {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.issued-placeholder {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+
+.issued-placeholder > .material-symbols-rounded {
+  font-size: 44px;
+  color: var(--subtle);
+}
+
+.issued-placeholder p { max-width: 430px; }
+
+.issued-card {
+  display: grid;
+  gap: 16px;
+}
+
+.secret-block {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  display: grid;
+  gap: 8px;
+}
+
+.secret-block > span {
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.secret-block code {
+  max-height: 112px;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.secret-block .secondary-button {
+  justify-self: start;
+}
+
+.provisioning-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.provisioning-note .material-symbols-rounded {
+  font-size: 18px;
+  color: var(--success);
+}
+
+.table-header {
+  padding: 18px 18px 12px;
+}
+
+.table-header h2 { margin-bottom: 0; }
+.table-state { padding: 28px 18px; color: var(--muted); }
+.danger-text { color: var(--danger); }
+.table-action { text-align: right; }
+.secondary-button.compact { padding: 6px 9px; font-size: 12px; }
+.enrollment-table .device-name strong { color: var(--text); font-size: 13px; }
+
+@media (max-width: 1100px) {
+  .enrollment-layout { grid-template-columns: 1fr; }
+}
