@@ -1,5 +1,5 @@
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   flexRender,
@@ -9,10 +9,17 @@ import {
 } from '@tanstack/react-table'
 import axios from 'axios'
 import {
+  createDeviceCommand,
   getDevice,
   getLatestTelemetry,
+  getMe,
+  listDeviceCommands,
   listDevices,
+  resumeDevice,
+  suspendDevice,
   type Device,
+  type DeviceCommand,
+  type DeviceCommandType,
   type DeviceTelemetry,
 } from './api'
 
@@ -68,6 +75,8 @@ export function DevicesPage() {
 }
 
 export function DeviceDetailPage({ deviceId }: { deviceId: string }) {
+  const queryClient = useQueryClient()
+  const principal = useQuery({ queryKey: ['me'], queryFn: getMe, staleTime: 30_000 })
   const query = useQuery({
     queryKey: ['device-detail', deviceId],
     queryFn: async () => {
@@ -76,10 +85,63 @@ export function DeviceDetailPage({ deviceId }: { deviceId: string }) {
     },
     refetchInterval: 10_000,
   })
+  const canReadCommands = Boolean(principal.data?.permissions.includes('commands.read'))
+  const commands = useQuery({
+    queryKey: ['device-commands', deviceId],
+    queryFn: () => listDeviceCommands(deviceId, 50, 0),
+    enabled: canReadCommands,
+    refetchInterval: 5_000,
+  })
+  const [actionMessage, setActionMessage] = React.useState('')
+
+  const commandMutation = useMutation({
+    mutationFn: (type: DeviceCommandType) => createDeviceCommand(deviceId, type),
+    onSuccess: async (command) => {
+      setActionMessage(`${humanCommandType(command.type)} queued.`)
+      await queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] })
+    },
+  })
+  const lifecycleMutation = useMutation({
+    mutationFn: (operation: 'suspend' | 'resume') => operation === 'suspend' ? suspendDevice(deviceId) : resumeDevice(deviceId),
+    onSuccess: async (_, operation) => {
+      setActionMessage(operation === 'suspend' ? 'Suspension requested; disconnect queued.' : 'Resume requested; connect queued.')
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['device-detail', deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] }),
+        queryClient.invalidateQueries({ queryKey: ['devices'] }),
+      ])
+    },
+  })
 
   if (query.isPending) return <LoadingPanel />
   if (query.isError) return <ErrorPanel error={query.error} retry={() => query.refetch()} />
   const { device, telemetry } = query.data
+  const permissions = new Set(principal.data?.permissions ?? [])
+  const canCreateCommand = permissions.has('commands.create')
+  const unavailableForActiveCommand = device.suspended || device.status === 'revoking'
+  const mutationError = commandMutation.error || lifecycleMutation.error
+
+  const commandActions: Array<{ type: DeviceCommandType; label: string; icon: string; permission: string; confirm?: string; disabledWhenSuspended?: boolean }> = [
+    { type: 'connect', label: 'Connect', icon: 'play_arrow', permission: 'devices.connect', disabledWhenSuspended: true },
+    { type: 'disconnect', label: 'Disconnect', icon: 'stop_circle', permission: 'devices.disconnect', confirm: 'Queue a disconnect command for this device?' },
+    { type: 'apply-config', label: 'Apply config', icon: 'sync', permission: 'devices.reconfigure', disabledWhenSuspended: true },
+    { type: 'rotate-key', label: 'Rotate key', icon: 'key', permission: 'devices.rotate_key', confirm: 'Rotate this device WireGuard key? The device must stay reachable during reconciliation.', disabledWhenSuspended: true },
+  ]
+
+  function queueCommand(action: (typeof commandActions)[number]) {
+    if (action.confirm && !window.confirm(action.confirm)) return
+    setActionMessage('')
+    commandMutation.mutate(action.type)
+  }
+
+  function changeLifecycle(operation: 'suspend' | 'resume') {
+    const message = operation === 'suspend'
+      ? 'Suspend this device? Guardian will keep the management channel available only to deliver disconnect and receive status.'
+      : 'Resume this device and queue a connect command?'
+    if (!window.confirm(message)) return
+    setActionMessage('')
+    lifecycleMutation.mutate(operation)
+  }
 
   return (
     <section className="page-stack">
@@ -87,6 +149,29 @@ export function DeviceDetailPage({ deviceId }: { deviceId: string }) {
         <div><Link className="back-link" to="/devices">← Devices</Link><h2>{device.name}</h2><p className="mono">{device.device_uuid}</p></div>
         <StatusBadge state={device.status} suspended={device.suspended} />
       </div>
+
+      {(canCreateCommand || permissions.has('devices.update')) && (
+        <article className="panel device-actions-panel">
+          <div className="device-actions-heading">
+            <div><div className="eyebrow">Remote management</div><h2>Device actions</h2><p>Commands are durable in Guardian. WebSocket wakes the phone immediately when available; HTTP polling remains the fallback.</p></div>
+            {(commandMutation.isPending || lifecycleMutation.isPending) && <span className="status">Queuing…</span>}
+          </div>
+          <div className="device-actions">
+            {commandActions.map((action) => {
+              const allowed = canCreateCommand && permissions.has(action.permission)
+              if (!allowed) return null
+              const disabled = commandMutation.isPending || lifecycleMutation.isPending || (Boolean(action.disabledWhenSuspended) && unavailableForActiveCommand)
+              return <button className="secondary-button action-button" disabled={disabled} key={action.type} type="button" onClick={() => queueCommand(action)}><span className="material-symbols-rounded">{action.icon}</span>{action.label}</button>
+            })}
+            {permissions.has('devices.update') && (device.suspended
+              ? <button className="primary-button action-button" disabled={commandMutation.isPending || lifecycleMutation.isPending} type="button" onClick={() => changeLifecycle('resume')}><span className="material-symbols-rounded">resume</span>Resume</button>
+              : <button className="secondary-button action-button danger-outline" disabled={commandMutation.isPending || lifecycleMutation.isPending} type="button" onClick={() => changeLifecycle('suspend')}><span className="material-symbols-rounded">pause_circle</span>Suspend</button>)}
+          </div>
+          {actionMessage && <div className="alert success compact-alert">{actionMessage}</div>}
+          {mutationError && <div className="alert danger compact-alert">{errorMessage(mutationError)}</div>}
+        </article>
+      )}
+
       <div className="detail-grid">
         <InfoCard title="Device identity" icon="devices">
           <InfoRow label="Serial" value={device.serial_number || '—'} mono />
@@ -103,8 +188,60 @@ export function DeviceDetailPage({ deviceId }: { deviceId: string }) {
       </div>
       <RuntimeTelemetry telemetry={telemetry} />
       {telemetry?.error_code && <article className="alert danger runtime-error"><strong>{telemetry.error_code}</strong><span>{telemetry.error_message || 'Device reported a runtime error.'}</span></article>}
+      {canReadCommands && <CommandHistory query={commands} />}
     </section>
   )
+}
+
+function CommandHistory({ query }: { query: ReturnType<typeof useQuery<{ items: DeviceCommand[]; total: number; limit: number; offset: number }>> }) {
+  return (
+    <article className="panel command-history-panel">
+      <div className="telemetry-header"><div><div className="eyebrow">Control plane</div><h2>Command history</h2></div>{query.data && <span className="status">{query.data.total} commands</span>}</div>
+      {query.isPending && <div className="inline-loading">Loading command history…</div>}
+      {query.isError && <div className="alert danger compact-alert">{errorMessage(query.error)}</div>}
+      {query.data && (
+        <div className="table-scroll">
+          <table className="data-table command-table">
+            <thead><tr><th>Command</th><th>Status</th><th>Created</th><th>Finished</th><th>Result</th></tr></thead>
+            <tbody>
+              {query.data.items.map((command) => <CommandRow command={command} key={command.id} />)}
+              {query.data.items.length === 0 && <tr><td className="empty-cell" colSpan={5}>No commands have been issued for this device.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </article>
+  )
+}
+
+function CommandRow({ command }: { command: DeviceCommand }) {
+  const terminal = ['succeeded', 'failed', 'expired'].includes(command.status)
+  const result = command.error_message || (terminal && command.result && Object.keys(command.result).length > 0 ? JSON.stringify(command.result) : '—')
+  return <tr><td><div className="command-name"><span className="material-symbols-rounded">{commandIcon(command.type)}</span><span>{humanCommandType(command.type)}</span></div></td><td><CommandStatusBadge status={command.status} /></td><td>{formatDate(command.created_at)}</td><td>{command.finished_at ? formatDate(command.finished_at) : '—'}</td><td className={command.error_message ? 'command-error' : 'mono command-result'}>{result}</td></tr>
+}
+
+function CommandStatusBadge({ status }: { status: string }) {
+  const normalized = status.toLowerCase()
+  const tone = normalized === 'succeeded' ? 'ok' : normalized === 'failed' || normalized === 'expired' ? 'danger' : normalized === 'running' || normalized === 'delivered' ? 'warn' : 'neutral'
+  return <span className={`badge ${tone}`}><span className="dot" />{humanState(normalized)}</span>
+}
+
+function commandIcon(type: DeviceCommandType) {
+  switch (type) {
+    case 'connect': return 'play_arrow'
+    case 'disconnect': return 'stop_circle'
+    case 'apply-config': return 'sync'
+    case 'rotate-key': return 'key'
+  }
+}
+
+function humanCommandType(type: DeviceCommandType) {
+  switch (type) {
+    case 'connect': return 'Connect'
+    case 'disconnect': return 'Disconnect'
+    case 'apply-config': return 'Apply config'
+    case 'rotate-key': return 'Rotate key'
+  }
 }
 
 function RuntimeTelemetry({ telemetry }: { telemetry: DeviceTelemetry | null }) {
