@@ -1,0 +1,28 @@
+{
+	auto_https off
+}
+
+:80 {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy guardian-server:8080
+	}
+
+	handle /healthz {
+		reverse_proxy guardian-server:8080
+	}
+
+	handle /readyz {
+		reverse_proxy guardian-server:8080
+	}
+
+	handle {
+		reverse_proxy guardian-web:80
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
