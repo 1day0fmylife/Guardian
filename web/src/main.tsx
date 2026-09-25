@@ -15,6 +15,7 @@ import { clearSession, listDevices, logout } from './api'
 import { DeviceDetailPage, DevicesPage } from './devices'
 import { EnrollmentsPage } from './enrollments'
 import './styles.css'
+import './enrollments.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {
