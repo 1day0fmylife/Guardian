@@ -179,11 +179,18 @@ func TestManagedEnrollmentDeviceChannel(t *testing.T) {
 	if _, err := st.DevicePrincipalByCredential(ctx, security.HashToken(rotated.Token)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("credential after finalized revoke error = %v, want ErrNotFound", err)
 	}
-	var leaseStatus string
-	if err := st.DB().QueryRowContext(ctx, sQuery(st, "SELECT status FROM address_leases WHERE device_id = ?"), claim.Device.ID).Scan(&leaseStatus); err != nil {
-		t.Fatalf("read finalized lease: %v", err)
+	var currentLeaseCount int
+	if err := st.DB().QueryRowContext(ctx, sQuery(st, "SELECT COUNT(*) FROM address_leases WHERE device_id = ?"), claim.Device.ID).Scan(&currentLeaseCount); err != nil {
+		t.Fatalf("count finalized current leases: %v", err)
 	}
-	if leaseStatus != "released" {
-		t.Fatalf("finalized lease status = %q, want released", leaseStatus)
+	if currentLeaseCount != 0 {
+		t.Fatalf("finalized current lease count = %d, want 0", currentLeaseCount)
+	}
+	var archivedLeaseCount int
+	if err := st.DB().QueryRowContext(ctx, sQuery(st, "SELECT COUNT(*) FROM address_lease_history WHERE device_id = ?"), claim.Device.ID).Scan(&archivedLeaseCount); err != nil {
+		t.Fatalf("count archived leases: %v", err)
+	}
+	if archivedLeaseCount != 1 {
+		t.Fatalf("archived lease count = %d, want 1", archivedLeaseCount)
 	}
 }
