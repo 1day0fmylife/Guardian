@@ -1,11 +1,12 @@
 package domain
 
 type EnrollmentClaim struct {
-	DeviceUUID   string `json:"device_uuid"`
-	SerialNumber string `json:"serial_number,omitempty"`
-	PrimaryMAC   string `json:"primary_mac,omitempty"`
-	DeviceName   string `json:"device_name"`
-	PublicKey    string `json:"public_key"`
+	DeviceUUID           string `json:"device_uuid"`
+	SerialNumber         string `json:"serial_number,omitempty"`
+	PrimaryMAC           string `json:"primary_mac,omitempty"`
+	DeviceName           string `json:"device_name"`
+	PublicKey            string `json:"public_key"`
+	DeviceCredentialHash string `json:"device_credential_hash,omitempty"`
 }
 
 type ManagedWireGuardConfig struct {

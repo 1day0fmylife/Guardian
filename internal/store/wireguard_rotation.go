@@ -42,14 +42,22 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 		}
 		return domain.ManagedWireGuardConfig{}, fmt.Errorf("load WireGuard peer for rotation: %w", err)
 	}
-	if currentRevision != expectedRevision {
-		return domain.ManagedWireGuardConfig{}, ErrConflict
-	}
+
+	// A managed device may lose the HTTP response after Guardian has committed
+	// the rotation. Permit one exact idempotent retry using the same public key
+	// and the previous revision so a reboot/network failure cannot strand the
+	// device on an unrecoverable key transition.
 	if currentKey == publicKey {
+		if currentRevision != expectedRevision && currentRevision != expectedRevision+1 {
+			return domain.ManagedWireGuardConfig{}, ErrConflict
+		}
 		if err := tx.Commit(); err != nil {
 			return domain.ManagedWireGuardConfig{}, fmt.Errorf("commit idempotent key rotation: %w", err)
 		}
 		return s.ManagedConfigForDevice(ctx, deviceID)
+	}
+	if currentRevision != expectedRevision {
+		return domain.ManagedWireGuardConfig{}, ErrConflict
 	}
 
 	var keyInUse int

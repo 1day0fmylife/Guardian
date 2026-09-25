@@ -12,14 +12,18 @@ import (
 )
 
 // ClaimManagedEnrollment performs enrollment and permanent device-credential
-// issuance in one transaction. The plaintext credential is returned exactly
-// once and Guardian stores only its hash.
+// issuance in one transaction. New managed devices may pre-generate their
+// credential and submit only its SHA-256 hash, eliminating the crash window
+// between consuming the enrollment token and persisting a server-generated
+// plaintext credential. Legacy clients may omit the hash and receive a
+// server-generated credential exactly once.
 func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input domain.EnrollmentClaim) (domain.ManagedEnrollmentClaimResult, error) {
 	token = strings.TrimSpace(token)
 	input.DeviceUUID = strings.TrimSpace(input.DeviceUUID)
 	input.SerialNumber = strings.TrimSpace(input.SerialNumber)
 	input.DeviceName = strings.TrimSpace(input.DeviceName)
 	input.PublicKey = strings.TrimSpace(input.PublicKey)
+	input.DeviceCredentialHash = strings.TrimSpace(input.DeviceCredentialHash)
 	if token == "" || input.DeviceUUID == "" || input.DeviceName == "" {
 		return domain.ManagedEnrollmentClaimResult{}, invalidf("token, device_uuid and device_name are required")
 	}
@@ -28,6 +32,11 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 	}
 	if err := security.ValidateWireGuardPublicKey(input.PublicKey); err != nil {
 		return domain.ManagedEnrollmentClaimResult{}, err
+	}
+	if input.DeviceCredentialHash != "" {
+		if err := validateDeviceCredentialHash(input.DeviceCredentialHash); err != nil {
+			return domain.ManagedEnrollmentClaimResult{}, err
+		}
 	}
 	mac, err := normalizeMAC(input.PrimaryMAC)
 	if err != nil {
@@ -143,7 +152,12 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("create WireGuard peer: %w", err)
 	}
 
-	credential, err := s.issueDeviceCredentialTx(ctx, tx, device.ID)
+	var credential domain.DeviceCredentialIssued
+	if input.DeviceCredentialHash != "" {
+		credential, err = s.issueDeviceCredentialHashTx(ctx, tx, device.ID, input.DeviceCredentialHash)
+	} else {
+		credential, err = s.issueDeviceCredentialTx(ctx, tx, device.ID)
+	}
 	if err != nil {
 		return domain.ManagedEnrollmentClaimResult{}, err
 	}
