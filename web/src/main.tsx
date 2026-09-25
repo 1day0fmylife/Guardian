@@ -11,7 +11,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router'
 import { AuthGate } from './auth'
-import { clearSession, listDevices, logout } from './api'
+import { clearSession, getMe, listDevices, logout } from './api'
 import { AuditPage, CommandsPage, RolesPage, SettingsPage, UsersPage } from './admin'
 import { DeviceDetailPage, DevicesPage } from './devices'
 import { EnrollmentsPage } from './enrollments'
@@ -29,16 +29,16 @@ const queryClient = new QueryClient({
 })
 
 const navigation = [
-  { icon: 'dashboard', label: 'Dashboard', to: '/' },
-  { icon: 'devices', label: 'Devices', to: '/devices' },
-  { icon: 'qr_code_2', label: 'Enrollments', to: '/enrollments' },
-  { icon: 'vpn_key', label: 'VPN Profiles', to: '/vpn-profiles' },
-  { icon: 'lan', label: 'Address Pools', to: '/address-pools' },
-  { icon: 'terminal', label: 'Commands', to: '/commands' },
-  { icon: 'group', label: 'Users', to: '/users' },
-  { icon: 'admin_panel_settings', label: 'Roles', to: '/roles' },
-  { icon: 'history', label: 'Audit', to: '/audit' },
-  { icon: 'settings', label: 'Settings', to: '/settings' },
+  { icon: 'dashboard', label: 'Dashboard', to: '/', permission: '' },
+  { icon: 'devices', label: 'Devices', to: '/devices', permission: 'devices.read' },
+  { icon: 'qr_code_2', label: 'Enrollments', to: '/enrollments', permission: 'enrollment.read' },
+  { icon: 'vpn_key', label: 'VPN Profiles', to: '/vpn-profiles', permission: 'profiles.read' },
+  { icon: 'lan', label: 'Address Pools', to: '/address-pools', permission: 'pools.read' },
+  { icon: 'terminal', label: 'Commands', to: '/commands', permission: 'commands.read' },
+  { icon: 'group', label: 'Users', to: '/users', permission: 'users.read' },
+  { icon: 'admin_panel_settings', label: 'Roles', to: '/roles', permission: 'roles.read' },
+  { icon: 'history', label: 'Audit', to: '/audit', permission: 'audit.read' },
+  { icon: 'settings', label: 'Settings', to: '/settings', permission: 'settings.read' },
 ] as const
 
 function Root() {
@@ -61,6 +61,7 @@ function pageTitle(pathname: string) {
 function Shell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const queryClient = useQueryClient()
+  const principal = useQuery({ queryKey: ['me'], queryFn: getMe, staleTime: 30_000 })
   const [dark, setDark] = React.useState(() => {
     const saved = localStorage.getItem('guardian.theme')
     return saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -78,6 +79,7 @@ function Shell() {
       window.location.assign('/')
     },
   })
+  const permissions = new Set(principal.data?.permissions ?? [])
 
   return (
     <div className="app-shell">
@@ -87,7 +89,7 @@ function Shell() {
           <span>Guardian</span>
         </div>
         <nav>
-          {navigation.map((item) => {
+          {navigation.filter((item) => !item.permission || permissions.has(item.permission)).map((item) => {
             const active = item.to === '/' ? pathname === '/' : pathname.startsWith(item.to)
             return <Link className={active ? 'nav-item active' : 'nav-item'} key={item.label} to={item.to}><span className="material-symbols-rounded">{item.icon}</span><span>{item.label}</span></Link>
           })}
@@ -112,7 +114,11 @@ function Shell() {
 }
 
 function Dashboard() {
-  const query = useQuery({ queryKey: ['devices'], queryFn: () => listDevices(100, 0), refetchInterval: 15_000 })
+  const principal = useQuery({ queryKey: ['me'], queryFn: getMe, staleTime: 30_000 })
+  const canReadDevices = Boolean(principal.data?.permissions.includes('devices.read'))
+  const query = useQuery({ queryKey: ['devices'], queryFn: () => listDevices(100, 0), refetchInterval: 15_000, enabled: canReadDevices })
+  if (principal.isPending) return <article className="panel loading-panel">Loading…</article>
+  if (!canReadDevices) return <article className="panel dashboard-panel"><div><h2>Guardian administration</h2><p>Your account is authenticated, but it does not have permission to read managed devices. Use the navigation items available to your role.</p></div></article>
   if (query.isPending) return <article className="panel loading-panel">Loading…</article>
   if (query.isError) return <article className="alert danger">Unable to load device inventory.</article>
 
