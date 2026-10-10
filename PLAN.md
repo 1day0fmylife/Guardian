@@ -86,7 +86,7 @@ Status:
 
 - [x] All core entities exist in `internal/store/migrations` (001–005), plus `device_credentials` and `address_lease_history`.
 - [x] SQLite and PostgreSQL share one migration set.
-- [ ] PostgreSQL is not exercised by the test suite or CI; store tests run on SQLite.
+- [ ] PostgreSQL coverage is partial: service catalog tests run on both dialects when `GUARDIAN_TEST_POSTGRES_URL` is set (CI sets it); the older store tests still run on SQLite only.
 
 ## Phase 2 — enrollment
 
@@ -148,6 +148,18 @@ Status:
 - [x] Device credential revocation (`/api/v1/devices/{id}/credentials/revoke`).
 - [ ] Administrative export of a device configuration (without private key); only the device itself can fetch it (`GET /api/v1/device/config`).
 - [ ] Update/delete of VPN profiles and address pools: only list and create are routed.
+
+## Phase 3b — service catalog and grants (Arlan ecosystem G-01)
+
+Guardian brokers device access to SunkarDAV, Admiral and SunkarCWMP ACS. Design and API contract: `docs/service-catalog.md`, `docs/openapi/service-catalog.yaml`.
+
+Status:
+
+- [x] Versioned service definitions for `sunkardav`, `admiral-device` and `sunkarcwmp-acs`, seeded disabled (migration 006).
+- [x] Tenant/site/group/device grants with deterministic precedence, deny-by-default and revocation history.
+- [x] `services.read` / `services.manage` permissions; mutations audited in the same transaction.
+- [x] Admin API and the non-secret `GET /api/v1/device/services` effective-policy endpoint.
+- [ ] Gateway enforcement of the policy (G-02/G-03), device refresh over the WebSocket wake channel (G-04), operator WebUI (G-06).
 
 ## Phase 4 — command and telemetry plane
 

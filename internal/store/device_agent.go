@@ -504,6 +504,9 @@ func (s *Store) SuspendDeviceAndQueueDisconnect(ctx context.Context, deviceID st
 	if err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("queue suspend disconnect: %w", err)
 	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return domain.DeviceCommand{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("commit device suspension: %w", err)
 	}

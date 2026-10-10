@@ -1,0 +1,333 @@
+openapi: 3.0.3
+info:
+  title: Guardian service catalog API (G-01)
+  version: 1.0.0
+  description: >
+    Administrative service catalog, grants, device scopes and the
+    non-secret device effective-policy endpoint. See docs/service-catalog.md.
+servers:
+  - url: /api/v1
+tags:
+  - name: Service catalog
+  - name: Device
+components:
+  securitySchemes:
+    adminSession:
+      type: http
+      scheme: bearer
+      description: Administrator session token (Authorization Bearer).
+    deviceCredential:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: "`Guardian-Device <credential>`"
+  parameters:
+    ServiceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, enum: [sunkardav, admiral-device, sunkarcwmp-acs] }
+    DeviceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+    ServiceDefinition:
+      type: object
+      required: [id, revision, display_name, internal_dns_name, protocol, port, tls_policy, allowed_scopes, enabled]
+      properties:
+        id: { type: string }
+        revision: { type: integer, format: int64 }
+        display_name: { type: string, maxLength: 80 }
+        internal_dns_name: { type: string, description: Bare DNS host name }
+        protocol: { type: string, enum: [https, http, tcp] }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        tls_policy: { type: string, enum: [required, disabled] }
+        allowed_scopes:
+          type: array
+          items: { type: string, enum: [tenant, site, group, device] }
+        enabled: { type: boolean }
+        updated_by_user_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ServiceDefinitionUpdate:
+      type: object
+      required: [expected_revision, display_name, internal_dns_name, protocol, port, allowed_scopes, enabled]
+      additionalProperties: false
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+        display_name: { type: string }
+        internal_dns_name: { type: string }
+        protocol: { type: string, enum: [https, http, tcp] }
+        port: { type: integer }
+        tls_policy: { type: string, enum: [required, disabled], default: required }
+        allowed_scopes: { type: array, items: { type: string } }
+        enabled: { type: boolean }
+    ServiceGrant:
+      type: object
+      properties:
+        id: { type: string }
+        service_id: { type: string }
+        scope_type: { type: string, enum: [tenant, site, group, device] }
+        scope_id: { type: string }
+        effect: { type: string, enum: [allow, deny] }
+        policy_revision: { type: integer, format: int64 }
+        created_by_user_id: { type: string }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        revoked_by_user_id: { type: string }
+        revoked_policy_revision: { type: integer, format: int64 }
+    ServiceGrantRequest:
+      type: object
+      required: [scope_type, scope_id, effect]
+      additionalProperties: false
+      properties:
+        scope_type: { type: string, enum: [tenant, site, group, device] }
+        scope_id: { type: string, maxLength: 128 }
+        effect: { type: string, enum: [allow, deny] }
+    DeviceScopes:
+      type: object
+      additionalProperties: false
+      properties:
+        tenant_id: { type: string }
+        site_id: { type: string }
+        group_ids: { type: array, items: { type: string }, maxItems: 64 }
+    DeviceServicePolicy:
+      type: object
+      required: [device_id, access_state, revision, generated_at, services]
+      properties:
+        device_id: { type: string }
+        access_state: { type: string, enum: [active, pending, suspended, revoking, revoked] }
+        revision: { type: integer, format: int64 }
+        generated_at: { type: string, format: date-time }
+        services:
+          type: array
+          items:
+            type: object
+            required: [id, display_name, host, port, protocol, tls_policy, revision]
+            properties:
+              id: { type: string }
+              display_name: { type: string }
+              host: { type: string }
+              port: { type: integer }
+              protocol: { type: string }
+              tls_policy: { type: string }
+              revision: { type: integer, format: int64 }
+    AdminDevicePolicy:
+      type: object
+      properties:
+        device_id: { type: string }
+        access_state: { type: string }
+        revision: { type: integer, format: int64 }
+        scopes: { $ref: '#/components/schemas/DeviceScopes' }
+        services:
+          type: array
+          items:
+            type: object
+            properties:
+              service_id: { type: string }
+              service_revision: { type: integer, format: int64 }
+              display_name: { type: string }
+              enabled: { type: boolean }
+              allowed: { type: boolean }
+              reason: { type: string, description: "no_grant, service_disabled, device_not_active, <scope>_grant, <scope>_deny" }
+              source_scope_type: { type: string }
+              source_grant_id: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+paths:
+  /services:
+    get:
+      tags: [Service catalog]
+      summary: List current service revisions (services.read)
+      security: [{ adminSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - { name: enabled, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Page of services and the current global policy revision
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ServiceDefinition' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  policy_revision: { type: integer, format: int64 }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /services/{id}:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      tags: [Service catalog]
+      summary: Get a service (services.read)
+      security: [{ adminSession: [] }]
+      responses:
+        '200':
+          description: Service
+          content: { application/json: { schema: { $ref: '#/components/schemas/ServiceDefinition' } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Service catalog]
+      summary: Append a new service revision (services.manage)
+      description: Idempotent; identical content returns changed=false. A stale expected_revision with different content returns 409 service_revision_conflict.
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ServiceDefinitionUpdate' } } }
+      responses:
+        '200':
+          description: Updated or unchanged service
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service: { $ref: '#/components/schemas/ServiceDefinition' }
+                  policy_revision: { type: integer, format: int64 }
+                  changed: { type: boolean }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /services/{id}/revisions:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      tags: [Service catalog]
+      summary: Revision history, newest first (services.read)
+      security: [{ adminSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200': { description: Page of revisions }
+        '404': { $ref: '#/components/responses/Error' }
+  /services/{id}/grants:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      tags: [Service catalog]
+      summary: List grants (services.read)
+      security: [{ adminSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - { name: scope_type, in: query, schema: { type: string, enum: [tenant, site, group, device] } }
+        - { name: scope_id, in: query, schema: { type: string } }
+        - { name: effect, in: query, schema: { type: string, enum: [allow, deny] } }
+        - { name: include_revoked, in: query, schema: { type: boolean, default: false } }
+        - name: sort
+          in: query
+          description: "created_at, scope_type, scope_id or effect; prefix with '-' for descending (default -created_at)"
+          schema: { type: string }
+      responses:
+        '200':
+          description: Page of grants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ServiceGrant' } }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Service catalog]
+      summary: Create or replace the grant for a scope (services.manage)
+      description: Idempotent. 201 when a grant was created or its effect changed, 200 when it already existed.
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ServiceGrantRequest' } } }
+      responses:
+        '200': { description: Unchanged }
+        '201': { description: Created or changed }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /services/{id}/grants/{grant_id}:
+    delete:
+      tags: [Service catalog]
+      summary: Revoke a grant (services.manage)
+      description: Idempotent; revoking a revoked grant returns changed=false.
+      security: [{ adminSession: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ServiceId' }
+        - { name: grant_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Revoked grant }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /devices/{id}/scopes:
+    parameters: [{ $ref: '#/components/parameters/DeviceId' }]
+    get:
+      tags: [Service catalog]
+      summary: Device tenant/site/group membership (services.read)
+      security: [{ adminSession: [] }]
+      responses:
+        '200':
+          description: Scopes
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeviceScopes' } } }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Service catalog]
+      summary: Replace device membership (services.manage)
+      security: [{ adminSession: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DeviceScopes' } } }
+      responses:
+        '200': { description: Updated scopes and policy revision }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /devices/{id}/services:
+    parameters: [{ $ref: '#/components/parameters/DeviceId' }]
+    get:
+      tags: [Service catalog]
+      summary: Administrative effective policy with reasons (services.read)
+      security: [{ adminSession: [] }]
+      responses:
+        '200':
+          description: Effective policy
+          content: { application/json: { schema: { $ref: '#/components/schemas/AdminDevicePolicy' } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /device/services:
+    get:
+      tags: [Device]
+      summary: Effective service policy of the authenticated device
+      description: Read-only and non-secret. Empty services unless the device is active and has an effective allow.
+      security: [{ deviceCredential: [] }]
+      responses:
+        '200':
+          description: Policy
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeviceServicePolicy' } } }
+        '401': { $ref: '#/components/responses/Error' }
