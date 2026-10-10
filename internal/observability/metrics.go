@@ -115,7 +115,7 @@ func (m *Metrics) Write(w io.Writer) {
 			fmt.Fprintf(w, "guardian_service_access_denials_total{service=%q,reason=%q} %d\n", id, reason, m.denials[i][j].Load())
 		}
 	}
-	fmt.Fprintf(w, "# TYPE guardian_policy_auth_denials_total counter\nguardian_policy_auth_denials_total %d\n# TYPE guardian_telemetry_deleted_total counter\nguardian_telemetry_deleted_total %d\n# TYPE guardian_gateway_reachable gauge\nguardian_gateway_reachable %d\n# TYPE guardian_gateway_last_probe_timestamp_seconds gauge\nguardian_gateway_last_probe_timestamp_seconds %d\n", m.authDenied.Load(), m.deleted.Load(), m.gatewayUp.Load(), m.gatewayChecked.Load())
+	fmt.Fprintf(w, "# HELP guardian_policy_auth_denials_total Rejected device policy authentication attempts.\n# TYPE guardian_policy_auth_denials_total counter\nguardian_policy_auth_denials_total %d\n# HELP guardian_telemetry_deleted_total Historical telemetry rows deleted by this instance.\n# TYPE guardian_telemetry_deleted_total counter\nguardian_telemetry_deleted_total %d\n# HELP guardian_gateway_reachable Latest configured gateway TCP probe succeeded.\n# TYPE guardian_gateway_reachable gauge\nguardian_gateway_reachable %d\n# HELP guardian_gateway_last_probe_timestamp_seconds Unix timestamp of the latest configured gateway TCP probe.\n# TYPE guardian_gateway_last_probe_timestamp_seconds gauge\nguardian_gateway_last_probe_timestamp_seconds %d\n", m.authDenied.Load(), m.deleted.Load(), m.gatewayUp.Load(), m.gatewayChecked.Load())
 }
 
 type Pinger interface{ Ping(context.Context) error }
@@ -132,7 +132,7 @@ func (m *Metrics) Handler(database Pinger) http.Handler {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		m.Write(w)
-		fmt.Fprintf(w, "# TYPE guardian_database_up gauge\nguardian_database_up %d\n", up)
+		fmt.Fprintf(w, "# HELP guardian_database_up Authoritative database ping succeeded.\n# TYPE guardian_database_up gauge\nguardian_database_up %d\n", up)
 	})
 	return mux
 }

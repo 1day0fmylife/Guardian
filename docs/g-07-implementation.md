@@ -52,7 +52,8 @@ Passed locally against PostgreSQL 16-alpine and SQLite:
 - Frontend: `bun run --cwd web test` (6 tests, 24 assertions) and build.
 - `docker compose config --quiet` and `git diff --check`.
 - Official `prom/prometheus:v3.5.0` promtool: configuration, five rules and
-  synthetic DB/configured-gateway/disabled-gateway alert scenarios.
+  synthetic DB/configured-gateway/disabled-gateway alert scenarios; live
+  exporter exposition passed `promtool check metrics`.
 
 The existing backend CI supplies `GUARDIAN_TEST_POSTGRES_URL`; its `go test
 ./...` automatically executes the expanded matrix. No parallel workflow or
