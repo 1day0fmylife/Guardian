@@ -156,6 +156,10 @@ type ServiceDefinitionFilter struct {
 
 // ListServiceDefinitions returns current service revisions ordered by id.
 func (s *Store) ListServiceDefinitions(ctx context.Context, filter ServiceDefinitionFilter, limit, offset int) ([]domain.ServiceDefinition, int, error) {
+	return s.listServiceDefinitions(ctx, s.db, filter, limit, offset)
+}
+
+func (s *Store) listServiceDefinitions(ctx context.Context, q sqlQueryer, filter ServiceDefinitionFilter, limit, offset int) ([]domain.ServiceDefinition, int, error) {
 	where := ""
 	var args []any
 	if filter.Enabled != nil {
@@ -166,10 +170,10 @@ func (s *Store) ListServiceDefinitions(ctx context.Context, filter ServiceDefini
 		JOIN service_definition_revisions r ON r.service_id = d.id AND r.revision = d.current_revision` + where
 
 	var total int
-	if err := s.db.QueryRowContext(ctx, s.q("SELECT COUNT(*)"+base), args...).Scan(&total); err != nil {
+	if err := q.QueryRowContext(ctx, s.q("SELECT COUNT(*)"+base), args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count service definitions: %w", err)
 	}
-	rows, err := s.db.QueryContext(ctx, s.q("SELECT "+serviceDefinitionColumns+base+" ORDER BY d.id LIMIT ? OFFSET ?"),
+	rows, err := q.QueryContext(ctx, s.q("SELECT "+serviceDefinitionColumns+base+" ORDER BY d.id LIMIT ? OFFSET ?"),
 		append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list service definitions: %w", err)
@@ -704,11 +708,15 @@ type evaluatedDevicePolicy struct {
 }
 
 // evaluateDevicePolicy resolves every catalog service for one device. The
-// revision is read before the content so the returned content is never older
-// than the revision it is labelled with.
+// revision and content are read in one database snapshot.
 func (s *Store) evaluateDevicePolicy(ctx context.Context, deviceID string) (evaluatedDevicePolicy, error) {
 	var out evaluatedDevicePolicy
-	revision, err := s.readServicePolicyRevision(ctx, s.db)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: true})
+	if err != nil {
+		return out, fmt.Errorf("begin device policy snapshot: %w", err)
+	}
+	defer tx.Rollback()
+	revision, err := s.readServicePolicyRevision(ctx, tx)
 	if err != nil {
 		return out, err
 	}
@@ -716,7 +724,7 @@ func (s *Store) evaluateDevicePolicy(ctx context.Context, deviceID string) (eval
 
 	var status string
 	var suspended int
-	if err := s.db.QueryRowContext(ctx, s.q("SELECT status, suspended FROM devices WHERE id = ?"), deviceID).Scan(&status, &suspended); err != nil {
+	if err := tx.QueryRowContext(ctx, s.q("SELECT status, suspended FROM devices WHERE id = ?"), deviceID).Scan(&status, &suspended); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, catalogErr(ErrNotFound, "device_not_found", "device was not found")
 		}
@@ -725,10 +733,10 @@ func (s *Store) evaluateDevicePolicy(ctx context.Context, deviceID string) (eval
 	out.accessState = domain.DeviceAccessState(status, suspended != 0)
 	active := out.accessState == domain.AccessStateActive
 
-	if out.scopes, err = s.loadDeviceScopes(ctx, s.db, deviceID); err != nil {
+	if out.scopes, err = s.loadDeviceScopes(ctx, tx, deviceID); err != nil {
 		return out, err
 	}
-	if out.definitions, _, err = s.ListServiceDefinitions(ctx, ServiceDefinitionFilter{}, 1000, 0); err != nil {
+	if out.definitions, _, err = s.listServiceDefinitions(ctx, tx, ServiceDefinitionFilter{}, 1000, 0); err != nil {
 		return out, err
 	}
 
@@ -748,7 +756,7 @@ func (s *Store) evaluateDevicePolicy(ctx context.Context, deviceID string) (eval
 			conditions = append(conditions, "(scope_type = 'group' AND scope_id = ?)")
 			args = append(args, group)
 		}
-		rows, err := s.db.QueryContext(ctx, s.q("SELECT "+serviceGrantColumns+
+		rows, err := tx.QueryContext(ctx, s.q("SELECT "+serviceGrantColumns+
 			" FROM service_grants WHERE revoked_at IS NULL AND ("+strings.Join(conditions, " OR ")+")"), args...)
 		if err != nil {
 			return out, fmt.Errorf("load device grants: %w", err)

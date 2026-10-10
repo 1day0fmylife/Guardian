@@ -2,6 +2,7 @@
 Description=Guardian WireGuard peer reconciler
 After=guardian-gateway-network.service guardian-api.service
 Requires=guardian-gateway-network.service
+PartOf=guardian-gateway-network.service
 
 [Service]
 User=guardian-gw

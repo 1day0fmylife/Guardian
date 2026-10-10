@@ -287,3 +287,19 @@ Status:
   docs/device-websocket.md and docs/g-04-implementation.md.
 - [ ] Installed device refresh/backoff and packet-path acceptance (G-03/G-05
   and downstream client); repository fixtures are not hardware evidence.
+
+## G-05 — durable revocation and recovery (2026-10-10)
+
+- [x] Reuse two-phase revoke and previous-key removal; reject overlapping
+  rotation and stale lifecycle during credential/key renewal.
+- [x] Kernel-expiring memberships and per-packet service checks bound denial
+  for existing connections and controller crashes; no unrestricted recovery.
+- [x] Migration 007 durably gates revoked-address release on applied ACL
+  acknowledgement; allocator retains revoking addresses without blocking others.
+- [x] Monotonic ACL revisions and consistent database snapshots; requeue
+  non-finalized desired peers on reconciler startup after kernel state loss.
+- [x] Document healthy/degraded propagation budgets, zero dual-key grace,
+  coordinated namespace upgrade and systemd stop/restart behavior in
+  docs/g-05-recovery.md.
+- [ ] Physical-device/installed-stack acceptance remains separate from the
+  disposable WireGuard/nftables/TLS fixture.

@@ -29,9 +29,9 @@ func TestRenderIsDeterministicAndFlushesEmptySets(t *testing.T) {
 	want := strings.Join([]string{
 		"flush set inet guardian_gw svc_admiral_device_v4",
 		"flush set inet guardian_gw svc_sunkarcwmp_acs_v4",
-		"add element inet guardian_gw svc_sunkarcwmp_acs_v4 { 10.77.0.2 }",
+		"add element inet guardian_gw svc_sunkarcwmp_acs_v4 { 10.77.0.2 timeout 30s }",
 		"flush set inet guardian_gw svc_sunkardav_v4",
-		"add element inet guardian_gw svc_sunkardav_v4 { 10.77.0.2, 10.77.0.9 }",
+		"add element inet guardian_gw svc_sunkardav_v4 { 10.77.0.2 timeout 30s, 10.77.0.9 timeout 30s }",
 		"",
 	}, "\n")
 	if got != want {

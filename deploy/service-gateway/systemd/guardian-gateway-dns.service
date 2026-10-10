@@ -2,6 +2,7 @@
 Description=Guardian service gateway DNS (authoritative for service names only)
 After=guardian-gateway-network.service
 Requires=guardian-gateway-network.service
+PartOf=guardian-gateway-network.service
 
 [Service]
 EnvironmentFile=/etc/guardian-gateway/gateway.env

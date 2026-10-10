@@ -88,7 +88,11 @@ func (s *Store) BeginDeviceVPNRevocation(ctx context.Context, deviceID string) (
 	`), cmd.ID, cmd.DeviceID, cmd.IdempotencyKey, string(cmd.Payload), cmd.CreatedAt, cmd.ExpiresAt); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("queue revocation disconnect: %w", err)
 	}
-	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+	policyRevision, err := s.bumpServicePolicyRevision(ctx, tx)
+	if err != nil {
+		return domain.DeviceCommand{}, err
+	}
+	if _, err := tx.ExecContext(ctx, s.q("UPDATE wireguard_peers SET service_revocation_revision = ? WHERE id = ?"), policyRevision, peerID); err != nil {
 		return domain.DeviceCommand{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -111,22 +115,30 @@ func (s *Store) CompleteDeviceVPNRevocation(ctx context.Context, deviceID string
 	defer tx.Rollback()
 
 	var peerID, desiredState string
-	var revision int64
+	var revision, policyRevision int64
 	query := `
-		SELECT id, desired_state, config_revision FROM wireguard_peers
+		SELECT id, desired_state, config_revision, service_revocation_revision FROM wireguard_peers
 		WHERE device_id = ?
 		ORDER BY updated_at DESC LIMIT 1
 	`
 	if s.dialect == "postgres" {
 		query += " FOR UPDATE"
 	}
-	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &desiredState, &revision); err != nil {
+	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &desiredState, &revision, &policyRevision); err != nil {
 		if err == sql.ErrNoRows {
 			return ErrNotFound
 		}
 		return fmt.Errorf("load revoked peer: %w", err)
 	}
 	if desiredState != "revoked" || revision != expectedRevision {
+		return ErrConflict
+	}
+	var required int
+	var applied int64
+	if err := tx.QueryRowContext(ctx, "SELECT required, applied_revision FROM service_acl_state WHERE id = 1").Scan(&required, &applied); err != nil {
+		return fmt.Errorf("read service ACL acknowledgement: %w", err)
+	}
+	if required != 0 && (policyRevision <= 0 || applied < policyRevision) {
 		return ErrConflict
 	}
 	now := nowText()
@@ -302,4 +314,25 @@ func (s *Store) ResumeDeviceVPNAndQueueConnect(ctx context.Context, deviceID str
 		return domain.DeviceCommand{}, fmt.Errorf("commit device resume: %w", err)
 	}
 	return cmd, nil
+}
+
+// Lock the durable lifecycle before issuing a credential or changing a key.
+// HTTP authentication may have happened before a concurrent suspend/revoke.
+func (s *Store) requireActiveDeviceTx(ctx context.Context, tx *sql.Tx, deviceID string) error {
+	query := "SELECT status, suspended FROM devices WHERE id = ?"
+	if s.dialect == "postgres" {
+		query += " FOR UPDATE"
+	}
+	var status string
+	var suspended int
+	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&status, &suspended); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return fmt.Errorf("lock device lifecycle: %w", err)
+	}
+	if status != "active" || suspended != 0 {
+		return ErrConflict
+	}
+	return nil
 }

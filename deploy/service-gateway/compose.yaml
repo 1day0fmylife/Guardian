@@ -45,6 +45,7 @@ services:
       GUARDIAN_DATABASE_URL: postgres://guardian:${POSTGRES_PASSWORD}@postgres:5432/guardian?sslmode=disable
       GUARDIAN_PUBLIC_URL: ${GUARDIAN_PUBLIC_URL}
       GUARDIAN_ENV: production
+      GUARDIAN_SERVICE_ACL_REQUIRED: "true"
       GUARDIAN_WIREGUARD_INTERFACE: ""
     depends_on:
       postgres:
@@ -196,6 +197,7 @@ services:
       GUARDIAN_DATABASE_URL: postgres://guardian:${POSTGRES_PASSWORD}@postgres:5432/guardian?sslmode=disable
       GUARDIAN_PUBLIC_URL: ${GUARDIAN_PUBLIC_URL}
       GUARDIAN_ENV: production
+      GUARDIAN_SERVICE_ACL_REQUIRED: "true"
       GUARDIAN_WIREGUARD_INTERFACE: wg0
     depends_on:
       wg-gateway:

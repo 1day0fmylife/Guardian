@@ -211,6 +211,9 @@ func (s *Server) deviceRotateWireGuardKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = s.audit(r, "", "wireguard.key.rotate", "device", principal.DeviceID, map[string]any{"config_revision": cfg.ConfigRevision})
+	if revision, err := s.store.ServicePolicyRevision(r.Context()); err == nil {
+		signalHubFor(s).publishPolicy(principal.DeviceID, revision)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"wireguard": cfg, "reconcile_pending": true})
 }
 

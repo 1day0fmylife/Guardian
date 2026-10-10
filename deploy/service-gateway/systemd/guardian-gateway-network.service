@@ -8,7 +8,8 @@ Type=simple
 EnvironmentFile=/etc/guardian-gateway/gateway.env
 # gateway-init.sh and the *.tmpl files come from deploy/service-gateway.
 ExecStart=/usr/local/sbin/gateway-init.sh
-ExecStopPost=-/usr/sbin/nft delete table inet guardian_gw
+# Keep the deny rules installed while stopped; never expose local VIPs.
+ExecStopPost=/usr/sbin/nft -f /run/guardian-gateway.nft
 Restart=on-failure
 RuntimeDirectory=guardian-gateway
 # Needs root for netlink, but only the capabilities it uses.

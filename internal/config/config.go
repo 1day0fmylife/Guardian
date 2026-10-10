@@ -16,6 +16,7 @@ type Config struct {
 	Environment                 string
 	SessionTTL                  time.Duration
 	WireGuardInterface          string
+	ServiceACLRequired          bool
 	WireGuardReconcileInterval  time.Duration
 	WireGuardReconcileBatchSize int
 }
@@ -34,7 +35,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GUARDIAN_WIREGUARD_RECONCILE_BATCH must be between 1 and 500")
 	}
 
+	aclRequired, err := strconv.ParseBool(env("GUARDIAN_SERVICE_ACL_REQUIRED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("GUARDIAN_SERVICE_ACL_REQUIRED must be a boolean")
+	}
 	cfg := Config{
+		ServiceACLRequired:          aclRequired,
 		ListenAddr:                  env("GUARDIAN_LISTEN_ADDR", ":8080"),
 		DatabaseURL:                 env("GUARDIAN_DATABASE_URL", "sqlite://./data/guardian.db"),
 		RedisURL:                    strings.TrimSpace(os.Getenv("GUARDIAN_REDIS_URL")),

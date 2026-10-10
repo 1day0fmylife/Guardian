@@ -285,7 +285,7 @@ func (s *Store) allocateAddressTx(ctx context.Context, tx *sql.Tx, poolID, devic
 		var used int
 		err := tx.QueryRowContext(ctx, s.q(`
 			SELECT COUNT(*) FROM address_leases
-			WHERE pool_id = ? AND address = ? AND status = 'active'
+			WHERE pool_id = ? AND address = ? AND status IN ('active', 'revoking')
 		`), poolID, candidate.String()).Scan(&used)
 		if err != nil {
 			return "", fmt.Errorf("check address lease: %w", err)

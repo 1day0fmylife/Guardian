@@ -25,18 +25,21 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 		return domain.ManagedWireGuardConfig{}, fmt.Errorf("begin WireGuard key rotation: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.requireActiveDeviceTx(ctx, tx, deviceID); err != nil {
+		return domain.ManagedWireGuardConfig{}, err
+	}
 
-	var peerID, currentKey string
+	var peerID, currentKey, previousKey string
 	var currentRevision int64
 	query := `
-		SELECT id, public_key, config_revision
+		SELECT id, public_key, previous_public_key, config_revision
 		FROM wireguard_peers
 		WHERE device_id = ? AND revoked_at IS NULL
 	`
 	if s.dialect == "postgres" {
 		query += " FOR UPDATE"
 	}
-	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &currentKey, &currentRevision); err != nil {
+	if err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &currentKey, &previousKey, &currentRevision); err != nil {
 		if err == sql.ErrNoRows {
 			return domain.ManagedWireGuardConfig{}, ErrNotFound
 		}
@@ -56,15 +59,15 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 		}
 		return s.ManagedConfigForDevice(ctx, deviceID)
 	}
-	if currentRevision != expectedRevision {
+	if currentRevision != expectedRevision || previousKey != "" {
 		return domain.ManagedWireGuardConfig{}, ErrConflict
 	}
 
 	var keyInUse int
 	if err := tx.QueryRowContext(ctx, s.q(`
 		SELECT COUNT(*) FROM wireguard_peers
-		WHERE public_key = ? AND id <> ?
-	`), publicKey, peerID).Scan(&keyInUse); err != nil {
+		WHERE (public_key = ? OR previous_public_key = ?) AND id <> ?
+	`), publicKey, publicKey, peerID).Scan(&keyInUse); err != nil {
 		return domain.ManagedWireGuardConfig{}, fmt.Errorf("check WireGuard public key uniqueness: %w", err)
 	}
 	if keyInUse != 0 {
@@ -83,6 +86,9 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 	}
 	if n, err := result.RowsAffected(); err == nil && n == 0 {
 		return domain.ManagedWireGuardConfig{}, ErrConflict
+	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return domain.ManagedWireGuardConfig{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.ManagedWireGuardConfig{}, fmt.Errorf("commit WireGuard key rotation: %w", err)

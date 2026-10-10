@@ -31,6 +31,10 @@ func (s *Store) RotateDeviceCredentialHash(ctx context.Context, principal domain
 	}
 	defer tx.Rollback()
 
+	if err := s.requireActiveDeviceTx(ctx, tx, principal.DeviceID); err != nil {
+		return domain.DeviceCredential{}, err
+	}
+
 	result, err := tx.ExecContext(ctx, s.q(`
 		UPDATE device_credentials SET revoked_at = ?
 		WHERE id = ? AND device_id = ? AND revoked_at IS NULL

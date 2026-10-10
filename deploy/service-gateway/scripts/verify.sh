@@ -47,6 +47,7 @@ section "deploy (clean environment)"
 "$here/scripts/deploy.sh" "$state" || { echo "FAIL deployment"; exit 1; }
 set -a; . "$state/.env"; set +a   # picks up the generated database password
 compose=(docker compose -p "$project" --env-file "$state/.env" -f "$here/compose.yaml" -f "$here/compose.test.yaml")
+"${compose[@]}" exec -T edge cat /data/caddy/pki/authorities/local/root.crt >"$state/pki/edge-ca.pem"
 net=${project}_public
 image=guardian-gateway:local
 server_key=$("${compose[@]}" exec -T wg-gateway wg show wg0 public-key)
@@ -87,7 +88,7 @@ setup=$(run_tester admin-setup \
     -e "SERVER_PUBLIC_KEY=$server_key" -e "VIP_NET=$VIP_NET" -e "VIP_DNS=$VIP_DNS" \
     -e "DAV_FQDN=$DAV_FQDN" -e "FLEET_FQDN=$FLEET_FQDN" -e "ACS_FQDN=$ACS_FQDN")
 if ! jq -e '.clients | length == 2' <<<"$setup" >/dev/null 2>&1; then
-    echo "FAIL provisioning: $setup"; exit 1
+    echo "FAIL provisioning (response omitted to protect fixture credentials)"; exit 1
 fi
 admin_token=$(jq -r .admin_token <<<"$setup")
 profile_id=$(jq -r .profile_id <<<"$setup")
@@ -127,6 +128,60 @@ echo "(after the change: B must reach Admiral and SunkarDAV, no longer ACS)"
 run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client b private_key)" -e "CLIENT_ADDRESS=$b_addr" \
     -e "EXPECT_ALLOWED=$FLEET_FQDN,$DAV_FQDN" | tally
 
+section "revocation also blocks an established TLS connection"
+held=$(docker run -d --network "$net" --cap-add NET_ADMIN -v "$state/pki:/pki:ro" "${common_env[@]}" \
+    -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "HELD_FQDN=$DAV_FQDN" "$image" /usr/local/bin/gateway-tester.sh held-connection)
+held_ready=0
+for _ in $(seq 1 20); do
+    if docker logs "$held" 2>/dev/null | grep -q CONNECTION_READY; then held_ready=1; break; fi
+    sleep 1
+done
+check "persistent TLS connection established before grant revocation" "$((1-held_ready))"
+docker exec "$held" touch /tmp/revocation-start
+run_tester admin-regrant "${api_env[@]}" -e "DEVICE_ID=$(client a device_id)" \
+    -e "REVOKE_SERVICE=sunkardav" -e "GRANT_SERVICE=sunkardav" >/dev/null
+docker wait "$held" >/dev/null
+docker logs "$held" 2>/dev/null | grep -E '^(PASS|FAIL)' | tally
+docker rm -f "$held" >/dev/null 2>&1
+run_tester admin-grant "${api_env[@]}" -e "DEVICE_ID=$(client a device_id)" -e "GRANT_SERVICE=sunkardav"
+sleep 4
+
+section "controller crash expires kernel memberships without a userspace flush"
+"${compose[@]}" stop guardian-acl >/dev/null
+sleep 35
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_ALLOWED=" | tally
+"${compose[@]}" start guardian-acl >/dev/null
+sleep 4
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_ALLOWED=$DAV_FQDN" | tally
+
+section "ruleset reload and kernel peer loss recover from durable state"
+"${compose[@]}" exec -T wg-gateway nft -f /run/guardian-gateway.nft
+"${compose[@]}" exec -T wg-gateway sh -c 'for key in $(wg show wg0 peers); do wg set wg0 peer "$key" remove; done'
+"${compose[@]}" restart guardian-api guardian-reconciler guardian-acl >/dev/null
+sleep 12
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_ALLOWED=$DAV_FQDN" | tally
+
+section "key rotation is staged across reconciler restart with no dual-key grace"
+"${compose[@]}" stop guardian-reconciler >/dev/null
+a_old_key=$(client a private_key)
+rotated=$(run_tester device-rotate -e "ENROLL=https://guardian.test" -e "DEVICE_TOKEN=$(client a credential)")
+if ! jq -e '.private_key | length > 0' <<<"$rotated" >/dev/null 2>&1; then echo "FAIL staged rotation"; exit 1; fi
+check "exact retry accepted and stale key revision rejected" 0
+sleep 8
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$a_old_key" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_ALLOWED=" | tally
+"${compose[@]}" start guardian-reconciler >/dev/null
+sleep 8
+setup=$(jq -c --arg k "$(jq -r .private_key <<<"$rotated")" '(.clients[] | select(.name=="a").private_key)=$k' <<<"$setup")
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_ALLOWED=$DAV_FQDN" | tally
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$a_old_key" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_TUNNEL=no" -e "EXPECT_ALLOWED=" | tally
+
 section "suspended device loses access"
 run_tester admin-suspend -e "API=https://admin.guardian.test:8443" -e "ADMIN_TOKEN=$admin_token" -e "DEVICE_ID=$(client a device_id)" >/dev/null
 sleep 8
@@ -134,8 +189,16 @@ run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_k
     -e "EXPECT_TUNNEL=any" -e "EXPECT_ALLOWED=" | tally
 
 section "revoked device loses access"
+"${compose[@]}" stop guardian-reconciler >/dev/null
 run_tester admin-revoke -e "API=https://admin.guardian.test:8443" -e "ADMIN_TOKEN=$admin_token" -e "DEVICE_ID=$(client b device_id)" >/dev/null
 sleep 10
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client b private_key)" -e "CLIENT_ADDRESS=$b_addr" \
+    -e "EXPECT_TUNNEL=any" -e "EXPECT_ALLOWED=" | tally
+
+section "restart during revocation keeps denial and completes peer removal"
+"${compose[@]}" restart guardian-api guardian-acl >/dev/null
+"${compose[@]}" start guardian-reconciler >/dev/null
+sleep 8
 run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client b private_key)" -e "CLIENT_ADDRESS=$b_addr" \
     -e "EXPECT_TUNNEL=any" -e "EXPECT_ALLOWED=" | tally
 
@@ -161,10 +224,11 @@ section "no secrets in logs"
 logs=$("${compose[@]}" logs --no-color 2>&1)
 leaks=0
 for secret in "$POSTGRES_PASSWORD" "$(cat "$state/wg/private.key")" "$admin_token" \
-              "$(client a private_key)" "$(client b private_key)" "$(jq -r .private_key <<<"$new")"; do
+              "$(client a private_key)" "$(client b private_key)" "$(jq -r .private_key <<<"$new")" \
+              "$a_old_key" "$(client a credential)" "$(client b credential)"; do
     if [[ -n $secret ]] && grep -qF -- "$secret" <<<"$logs"; then leaks=$((leaks + 1)); fi
 done
-[[ $leaks == 0 ]]; check "no database password, WireGuard key or admin token appears in any container log" $?
+[[ $leaks == 0 ]]; check "no database password, WireGuard key, device credential or admin token appears in any container log" $?
 
 echo
 if [[ $failures -eq 0 ]]; then echo "ALL CHECKS PASSED"; else echo "$failures CHECK(S) FAILED"; fi

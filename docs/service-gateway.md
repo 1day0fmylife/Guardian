@@ -71,8 +71,10 @@ namespace and read the same database.
 The nftables ruleset is static (`nftables.conf.tmpl`); `guardian-acl` only
 replaces the contents of the `svc_*_v4` sets, atomically (`nft -f -`). If the
 policy cannot be read for longer than `-stale-ttl` (default 30 s) all sets
-are flushed (deny). Sets are re-applied every `-resync` (30 s) so a reloaded
-ruleset is repopulated.
+are flushed (deny). Each membership also expires in the kernel after 30 s,
+including a controller crash. Sets are renewed every `-resync` (default 10 s,
+maximum 10 s) so a reloaded ruleset is repopulated. Tunnel packets recheck the
+service grant on every packet, including established connections.
 
 ## Deploy
 
@@ -213,11 +215,10 @@ and counts only; keys, addresses, tokens and database URLs are not logged.
 Implemented here: the reference deployment and the grant→firewall projection.
 Not implemented here and tracked separately:
 
-* **G-04** device-side policy refresh over the WebSocket wake channel.
-* **G-05** staged/atomic reconciliation with key rotation grace periods and
-  documented propagation SLOs. The 2 s sync interval is a default, not an SLO;
-  during a rotation the device is denied service access until the reconciler
-  has swapped the kernel peer.
+* Device-side application/retry/backoff of G-04 policy; the Guardian refresh
+  channel and policy API are implemented.
+* Physical-device acceptance of G-05; the server and disposable gateway
+  verification are documented in `docs/g-05-recovery.md`.
 * IPv6 tunnel addresses are not projected into sets (never allowed).
 * Per-request device authentication at the gateway (e.g. signed identity
   assertions to backends) is intentionally absent; add it only for endpoints
