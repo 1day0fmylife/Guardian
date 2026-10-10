@@ -52,12 +52,18 @@ func (s *Server) requireDevice(activeRequired bool, next deviceHandler) http.Han
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := deviceToken(r.Header.Get("Authorization"))
 		if token == "" {
+			if r.URL.Path == "/api/v1/device/services" {
+				s.metrics.AuthenticationDenied()
+			}
 			w.Header().Set("WWW-Authenticate", `Guardian-Device realm="Guardian"`)
 			writeError(w, http.StatusUnauthorized, "device_authentication_required", "device credential is required")
 			return
 		}
 		principal, err := s.store.DevicePrincipalByCredential(r.Context(), security.HashToken(token))
 		if err != nil {
+			if r.URL.Path == "/api/v1/device/services" {
+				s.metrics.AuthenticationDenied()
+			}
 			w.Header().Set("WWW-Authenticate", `Guardian-Device realm="Guardian"`)
 			writeError(w, http.StatusUnauthorized, "invalid_device_credential", "device credential is invalid or revoked")
 			return

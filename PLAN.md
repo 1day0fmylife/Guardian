@@ -86,7 +86,7 @@ Status:
 
 - [x] All core entities exist in `internal/store/migrations` (001–005), plus `device_credentials` and `address_lease_history`.
 - [x] SQLite and PostgreSQL share one migration set.
-- [ ] PostgreSQL coverage is partial: service catalog tests run on both dialects when `GUARDIAN_TEST_POSTGRES_URL` is set (CI sets it); the older store tests still run on SQLite only.
+- [x] Core store, service catalog, migrations and persistence outage tests run on SQLite and real PostgreSQL when `GUARDIAN_TEST_POSTGRES_URL` is set; CI already provides PostgreSQL 16.
 
 ## Phase 2 — enrollment
 
@@ -198,7 +198,7 @@ Status:
 - [x] Commands with a unique idempotency key and TTL, admin create/list, device poll and result reporting, and an outbound device WebSocket wake channel (`docs/device-websocket.md`).
 - [x] Telemetry ingestion and latest-telemetry view with all fields listed above.
 - [ ] Naming drifted from this plan: implemented command types are `connect`, `disconnect`, `apply-config` and `rotate-key`, and the lifecycle is `pending → delivered → running → succeeded|failed|expired`. Either the plan or the code should be aligned.
-- [ ] Telemetry retention policy: no pruning of `device_telemetry` exists.
+- [x] Opt-in bounded telemetry retention, dry-run maintenance command, atomic audit and latest-observation protection (`docs/telemetry-retention.md`).
 - [ ] Redis: `GUARDIAN_REDIS_URL` is read and logged, but nothing uses it yet.
 
 ## Phase 5 — WebUI
@@ -266,7 +266,7 @@ Status:
 
 - [x] Caddy routes `/api/*`, `/healthz`, `/readyz` to the server and everything else to the web container.
 - [x] Structured JSON logs, request IDs (`X-Request-ID`, stored on audit events), liveness/readiness endpoints, separate `audit_events` table.
-- [ ] Prometheus-compatible metrics endpoint.
+- [x] Opt-in loopback Prometheus exporter with fixed labels, denial/reconciliation counters, DB and gateway probes (`deploy/monitoring/README.md`).
 
 ## Deferred
 
@@ -314,3 +314,13 @@ Status:
 - [x] SQLite/PostgreSQL, API negative/RBAC/compatibility and frontend tests;
   validation evidence in docs/g-06-implementation.md.
 - [ ] Physical-camera and installed-stack acceptance; no hardware claim.
+
+## G-07 — production persistence and observability (2026-10-10)
+
+- [x] Existing PostgreSQL CI reused; older core-store tests extended to both database dialects.
+- [x] Fixed-cardinality metrics and tested Prometheus alerts; exporter disabled by default and loopback-only.
+- [x] Migration 008, bounded audited telemetry retention and preview/apply CLI.
+- [x] Database connection loss, persisted restart and endpoint outage/recovery tests retain deny-by-default and revoked access.
+- [x] PostgreSQL/SQLite tests, race detector, vet, command builds, frontend tests/build and monitoring validation passed locally.
+
+Evidence and operational limits: `docs/g-07-implementation.md`.

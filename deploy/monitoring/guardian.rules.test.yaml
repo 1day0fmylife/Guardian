@@ -1,0 +1,38 @@
+rule_files:
+  - guardian.rules.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="guardian",instance="127.0.0.1:9097"}'
+        values: '1 1 1 1'
+      - series: 'guardian_database_up{job="guardian",instance="127.0.0.1:9097"}'
+        values: '0 0 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GuardianDatabaseUnavailable
+        exp_alerts:
+          - exp_labels: {job: guardian, instance: '127.0.0.1:9097', severity: critical}
+            exp_annotations: {summary: 'Guardian cannot reach its authoritative database'}
+  - interval: 1m
+    input_series:
+      - series: 'guardian_gateway_reachable{job="guardian"}'
+        values: '0 0 0 0'
+      - series: 'guardian_gateway_last_probe_timestamp_seconds{job="guardian"}'
+        values: '0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GuardianGatewayUnreachable
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'guardian_gateway_reachable{job="guardian"}'
+        values: '0 0 0 0'
+      - series: 'guardian_gateway_last_probe_timestamp_seconds{job="guardian"}'
+        values: '1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GuardianGatewayUnreachable
+        exp_alerts:
+          - exp_labels: {job: guardian, severity: warning}
+            exp_annotations: {summary: 'Configured gateway TCP endpoint is unreachable'}

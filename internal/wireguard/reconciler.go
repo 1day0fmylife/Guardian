@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
 )
@@ -23,6 +24,8 @@ type Reconciler struct {
 	repository Repository
 	provider   Provider
 	batchSize  int
+	// Observe must be configured before starting the reconciliation loop.
+	Observe func(string, time.Time, error)
 }
 
 func NewReconciler(repository Repository, provider Provider, batchSize int) *Reconciler {
@@ -32,7 +35,13 @@ func NewReconciler(repository Repository, provider Provider, batchSize int) *Rec
 	return &Reconciler{repository: repository, provider: provider, batchSize: batchSize}
 }
 
-func (r *Reconciler) RunOnce(ctx context.Context) error {
+func (r *Reconciler) RunOnce(ctx context.Context) (err error) {
+	started := time.Now()
+	defer func() {
+		if r.Observe != nil {
+			r.Observe("wireguard_reconcile", started, err)
+		}
+	}()
 	items, err := r.repository.ListPendingWireGuardReconciliations(ctx, r.batchSize)
 	if err != nil {
 		return err
@@ -46,8 +55,13 @@ func (r *Reconciler) RunOnce(ctx context.Context) error {
 	return errors.Join(reconcileErrors...)
 }
 
-func (r *Reconciler) reconcileOne(ctx context.Context, item domain.WireGuardReconcileItem) error {
-	var err error
+func (r *Reconciler) reconcileOne(ctx context.Context, item domain.WireGuardReconcileItem) (err error) {
+	started := time.Now()
+	defer func() {
+		if r.Observe != nil {
+			r.Observe("wireguard_peer_reconcile", started, err)
+		}
+	}()
 	switch item.DesiredState {
 	case "connected":
 		err = r.provider.UpsertPeer(ctx, item)
