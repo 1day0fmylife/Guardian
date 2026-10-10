@@ -1,0 +1,26 @@
+groups:
+  - name: guardian
+    rules:
+      - alert: GuardianExporterUnavailable
+        expr: up{job="guardian"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Guardian exporter is unavailable'}
+      - alert: GuardianDatabaseUnavailable
+        expr: guardian_database_up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: 'Guardian cannot reach its authoritative database'}
+      - alert: GuardianGatewayUnreachable
+        expr: guardian_gateway_reachable == 0 and guardian_gateway_last_probe_timestamp_seconds > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: 'Configured gateway TCP endpoint is unreachable'}
+      - alert: GuardianWireGuardReconcileFailures
+        expr: increase(guardian_operations_total{operation="wireguard_peer_reconcile",result="error"}[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: 'WireGuard peer application or acknowledgement failed'}
+      - alert: GuardianTelemetryRetentionFailures
+        expr: increase(guardian_operations_total{operation="telemetry_retention",result="error"}[2h]) > 0
+        labels: {severity: warning}
+        annotations: {summary: 'Configured telemetry retention failed'}

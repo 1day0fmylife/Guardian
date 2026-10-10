@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
 	"github.com/1day0fmylife/Guardian/internal/rbac"
@@ -236,7 +237,13 @@ func (s *Server) adminSetDeviceScopes(w http.ResponseWriter, r *http.Request, pr
 // no credentials, upstream URLs with paths, or administrative endpoints.
 func (s *Server) deviceServices(w http.ResponseWriter, r *http.Request, principal domain.DevicePrincipal) {
 	w.Header().Set("Cache-Control", "no-store")
-	policy, err := s.store.DeviceServicePolicy(r.Context(), principal.DeviceID)
+	started := time.Now()
+	policy, err := s.store.DeviceServicePolicyObserved(r.Context(), principal.DeviceID, func(id string, decision domain.ServiceAccessDecision) {
+		if !decision.Allowed {
+			s.metrics.Denied(id, decision.Reason)
+		}
+	})
+	s.metrics.Observe("policy", started, err)
 	if err != nil {
 		writeCatalogError(w, err)
 		return

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -10,6 +12,9 @@ import (
 
 type Config struct {
 	ListenAddr                  string
+	MetricsListenAddr           string
+	GatewayProbeAddress         string
+	TelemetryRetentionAge       time.Duration
 	DatabaseURL                 string
 	RedisURL                    string
 	PublicURL                   string
@@ -39,7 +44,31 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("GUARDIAN_SERVICE_ACL_REQUIRED must be a boolean")
 	}
+	metricsAddr := strings.TrimSpace(os.Getenv("GUARDIAN_METRICS_LISTEN_ADDR"))
+	if metricsAddr != "" {
+		host, port, err := net.SplitHostPort(metricsAddr)
+		ip, ipErr := netip.ParseAddr(host)
+		number, portErr := strconv.Atoi(port)
+		if err != nil || ipErr != nil || !ip.IsLoopback() || portErr != nil || number < 1 || number > 65535 {
+			return Config{}, fmt.Errorf("GUARDIAN_METRICS_LISTEN_ADDR must use a literal loopback IP and valid port")
+		}
+	}
+	probe := strings.TrimSpace(os.Getenv("GUARDIAN_GATEWAY_PROBE_ADDRESS"))
+	if probe != "" {
+		host, port, err := net.SplitHostPort(probe)
+		number, portErr := strconv.Atoi(port)
+		if err != nil || host == "" || portErr != nil || number < 1 || number > 65535 {
+			return Config{}, fmt.Errorf("GUARDIAN_GATEWAY_PROBE_ADDRESS must be host:port")
+		}
+	}
+	age, err := time.ParseDuration(env("GUARDIAN_TELEMETRY_RETENTION_AGE", "0s"))
+	if err != nil || age < 0 || (age > 0 && (age < 24*time.Hour || age > 3650*24*time.Hour)) {
+		return Config{}, fmt.Errorf("GUARDIAN_TELEMETRY_RETENTION_AGE must be 0s (disabled) or between 24h and 87600h")
+	}
 	cfg := Config{
+		MetricsListenAddr:           metricsAddr,
+		GatewayProbeAddress:         probe,
+		TelemetryRetentionAge:       age,
 		ServiceACLRequired:          aclRequired,
 		ListenAddr:                  env("GUARDIAN_LISTEN_ADDR", ":8080"),
 		DatabaseURL:                 env("GUARDIAN_DATABASE_URL", "sqlite://./data/guardian.db"),

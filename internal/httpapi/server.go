@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
+	"github.com/1day0fmylife/Guardian/internal/observability"
 	"github.com/1day0fmylife/Guardian/internal/rbac"
 	"github.com/1day0fmylife/Guardian/internal/security"
 	"github.com/1day0fmylife/Guardian/internal/store"
@@ -28,6 +29,7 @@ const (
 
 type Server struct {
 	store             *store.Store
+	metrics           *observability.Metrics
 	startedAt         time.Time
 	publicURL         string
 	sessionTTL        time.Duration
@@ -38,6 +40,7 @@ func New(st *store.Store, publicURL string, sessionTTL time.Duration) *Server {
 	dummyHash, _ := security.HashPassword("guardian-invalid-password")
 	return &Server{
 		store:             st,
+		metrics:           &observability.Metrics{},
 		startedAt:         time.Now().UTC(),
 		publicURL:         strings.TrimRight(publicURL, "/"),
 		sessionTTL:        sessionTTL,
@@ -601,3 +604,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+// Metrics returns this server instance's bounded recorder for local exporters/workers.
+func (s *Server) Metrics() *observability.Metrics { return s.metrics }

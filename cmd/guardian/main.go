@@ -76,6 +76,58 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.MetricsListenAddr != "" {
+		exporter := &http.Server{Addr: cfg.MetricsListenAddr, Handler: api.Metrics().Handler(st), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+		go func() {
+			if err := exporter.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("metrics listener failed")
+				stop()
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = exporter.Shutdown(shutdownCtx)
+		}()
+	}
+	if cfg.GatewayProbeAddress != "" {
+		go func() {
+			tick := time.NewTicker(30 * time.Second)
+			defer tick.Stop()
+			for {
+				_ = api.Metrics().ProbeGateway(ctx, cfg.GatewayProbeAddress)
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+				}
+			}
+		}()
+	}
+	if cfg.TelemetryRetentionAge > 0 {
+		go func() {
+			tick := time.NewTicker(time.Hour)
+			defer tick.Stop()
+			for {
+				started := time.Now()
+				pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				result, err := st.PruneDeviceTelemetry(pruneCtx, time.Now().Add(-cfg.TelemetryRetentionAge), 1000, false)
+				cancel()
+				api.Metrics().Observe("telemetry_retention", started, err)
+				if err != nil {
+					logger.Error("telemetry retention failed")
+				} else {
+					api.Metrics().TelemetryDeleted(result.Deleted)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+				}
+			}
+		}()
+	}
+
 	var wgProvider *wireguard.WGCtrlProvider
 	if cfg.WireGuardInterface != "" {
 		wgProvider, err = wireguard.NewWGCtrlProvider(cfg.WireGuardInterface)
@@ -93,6 +145,7 @@ func main() {
 			os.Exit(1)
 		}
 		reconciler := wireguard.NewReconciler(st, wgProvider, cfg.WireGuardReconcileBatchSize)
+		reconciler.Observe = api.Metrics().Observe
 		go wireguard.RunReconcileLoop(ctx, reconciler, cfg.WireGuardReconcileInterval, func(err error) {
 			logger.Error("WireGuard reconcile", "interface", cfg.WireGuardInterface, "error", err)
 		})

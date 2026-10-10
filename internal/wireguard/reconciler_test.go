@@ -1,11 +1,14 @@
 package wireguard
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
+	"github.com/1day0fmylife/Guardian/internal/observability"
 )
 
 type fakeRepository struct {
@@ -67,5 +70,26 @@ func TestReconcilerRoutesDesiredStatesAndContinuesAfterFailure(t *testing.T) {
 	}
 	if len(repo.failed) != 1 || repo.failed[0] != "broken" {
 		t.Fatalf("failed = %v", repo.failed)
+	}
+}
+
+func TestReconcilerObservesPeerFailuresWithoutIdentityLabels(t *testing.T) {
+	repo := &fakeRepository{items: []domain.WireGuardReconcileItem{{PeerID: "secret-peer-id", DesiredState: "connected", ConfigRevision: 1}}}
+	provider := &fakeProvider{failID: "secret-peer-id"}
+	reconciler := NewReconciler(repo, provider, 10)
+	metrics := &observability.Metrics{}
+	reconciler.Observe = metrics.Observe
+	if err := reconciler.RunOnce(context.Background()); err == nil {
+		t.Fatal("failed peer reconcile returned success")
+	}
+	var body bytes.Buffer
+	metrics.Write(&body)
+	for _, op := range []string{"wireguard_reconcile", "wireguard_peer_reconcile"} {
+		if !strings.Contains(body.String(), `guardian_operations_total{operation="`+op+`",result="error"} 1`) {
+			t.Fatalf("missing %s failure counter", op)
+		}
+	}
+	if strings.Contains(body.String(), "secret-peer-id") {
+		t.Fatal("peer identity leaked to metric labels")
 	}
 }

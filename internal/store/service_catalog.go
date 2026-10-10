@@ -786,6 +786,12 @@ func (s *Store) evaluateDevicePolicy(ctx context.Context, deviceID string) (eval
 // allow grant resolves; suspended, revoking, revoked and pending devices get
 // an empty list.
 func (s *Store) DeviceServicePolicy(ctx context.Context, deviceID string) (domain.DeviceServicePolicy, error) {
+	return s.DeviceServicePolicyObserved(ctx, deviceID, nil)
+}
+
+// DeviceServicePolicyObserved emits decisions to a local observer after evaluating
+// a consistent snapshot. They never become part of the device response.
+func (s *Store) DeviceServicePolicyObserved(ctx context.Context, deviceID string, observe func(string, domain.ServiceAccessDecision)) (domain.DeviceServicePolicy, error) {
 	evaluated, err := s.evaluateDevicePolicy(ctx, deviceID)
 	if err != nil {
 		return domain.DeviceServicePolicy{}, err
@@ -801,6 +807,9 @@ func (s *Store) DeviceServicePolicy(ctx context.Context, deviceID string) (domai
 		Services:     []domain.DeviceServiceEndpoint{},
 	}
 	for i, def := range evaluated.definitions {
+		if observe != nil {
+			observe(def.ID, evaluated.decisions[i])
+		}
 		if !evaluated.decisions[i].Allowed {
 			continue
 		}
