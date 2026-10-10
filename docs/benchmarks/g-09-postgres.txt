@@ -1,0 +1,15 @@
+goos: linux
+goarch: amd64
+pkg: github.com/1day0fmylife/Guardian/internal/store
+cpu: Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz
+BenchmarkServiceAccessSnapshot/postgres/devices_100-8         	       1	   9199245 ns/op	       100.0 devices	  381792 B/op	    6273 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_100-8         	       1	   9187212 ns/op	       100.0 devices	  382736 B/op	    6275 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_100-8         	       1	  10231366 ns/op	       100.0 devices	  381808 B/op	    6273 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_1000-8        	       1	 154150653 ns/op	      1000 devices	 4790672 B/op	   58504 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_1000-8        	       1	 163687508 ns/op	      1000 devices	 4790640 B/op	   58504 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_1000-8        	       1	 156646684 ns/op	      1000 devices	 4791040 B/op	   58504 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_10000-8       	       1	19440828937 ns/op	     10000 devices	53101136 B/op	  580588 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_10000-8       	       1	16093684825 ns/op	     10000 devices	53105104 B/op	  580586 allocs/op
+BenchmarkServiceAccessSnapshot/postgres/devices_10000-8       	       1	20578629275 ns/op	     10000 devices	53099760 B/op	  580581 allocs/op
+PASS
+ok  	github.com/1day0fmylife/Guardian/internal/store	102.983s

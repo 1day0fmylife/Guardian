@@ -1,0 +1,15 @@
+goos: linux
+goarch: amd64
+pkg: github.com/1day0fmylife/Guardian/internal/gatewayacl
+cpu: Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz
+BenchmarkGatewayProjection/devices_100-8         	     100	    117533 ns/op	       100.0 devices	  135370 B/op	     807 allocs/op
+BenchmarkGatewayProjection/devices_100-8         	     100	    110708 ns/op	       100.0 devices	  135221 B/op	     807 allocs/op
+BenchmarkGatewayProjection/devices_100-8         	     100	    105287 ns/op	       100.0 devices	  135339 B/op	     807 allocs/op
+BenchmarkGatewayProjection/devices_1000-8        	     100	   1324659 ns/op	      1000 devices	 1525935 B/op	    7148 allocs/op
+BenchmarkGatewayProjection/devices_1000-8        	     100	   1382706 ns/op	      1000 devices	 1525221 B/op	    7147 allocs/op
+BenchmarkGatewayProjection/devices_1000-8        	     100	   1309896 ns/op	      1000 devices	 1529518 B/op	    7148 allocs/op
+BenchmarkGatewayProjection/devices_10000-8       	     100	  19905761 ns/op	     10000 devices	17770491 B/op	   70336 allocs/op
+BenchmarkGatewayProjection/devices_10000-8       	     100	  19637041 ns/op	     10000 devices	17770334 B/op	   70336 allocs/op
+BenchmarkGatewayProjection/devices_10000-8       	     100	  19990838 ns/op	     10000 devices	17770357 B/op	   70336 allocs/op
+PASS
+ok  	github.com/1day0fmylife/Guardian/internal/gatewayacl	6.514s
