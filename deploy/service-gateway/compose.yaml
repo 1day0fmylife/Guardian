@@ -1,0 +1,236 @@
+# Production reference: Guardian behind a WireGuard service gateway.
+#
+#   public ──udp/51820──▶ wg-gateway ──(INPUT only, no forwarding)──▶ proxy ──▶ upstream
+#   public ──tcp/443────▶ edge ──▶ guardian-api (device channel only)
+#   mgmt   ──tcp/8443───▶ edge ──▶ guardian-api / guardian-web
+#
+# Networks: `public` (published ports), `edge` (edge↔Guardian), `control`
+# (database; internal), `upstream` (service backends; internal, no egress).
+# Run through scripts/deploy.sh, which prepares ./state first.
+name: guardian-gateway
+
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: guardian
+      POSTGRES_USER: guardian
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/deploy.sh}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardian -d guardian"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Unprivileged API: no capabilities, read-only rootfs, no host network. It
+  # runs in control-plane-only mode; WireGuard peers are applied by
+  # guardian-reconciler inside the gateway namespace.
+  guardian-api:
+    build:
+      context: ../..
+      dockerfile: deploy/server.Dockerfile
+    <<: *hardening
+    cap_drop: [ALL]
+    environment:
+      GUARDIAN_LISTEN_ADDR: :8080
+      GUARDIAN_DATABASE_URL: postgres://guardian:${POSTGRES_PASSWORD}@postgres:5432/guardian?sslmode=disable
+      GUARDIAN_PUBLIC_URL: ${GUARDIAN_PUBLIC_URL}
+      GUARDIAN_ENV: production
+      GUARDIAN_WIREGUARD_INTERFACE: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [control, edge]
+    healthcheck:
+      test: ["CMD", "/guardian", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  guardian-web:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [edge]
+
+  edge:
+    image: caddy:2.10-alpine
+    <<: *hardening
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      GUARDIAN_PUBLIC_HOST: ${GUARDIAN_PUBLIC_HOST}
+      GUARDIAN_MGMT_HOST: ${GUARDIAN_MGMT_HOST}
+      EDGE_TLS: ${EDGE_TLS}
+    ports:
+      - "${PUBLIC_BIND:-0.0.0.0}:443:443"
+      - "${MGMT_BIND:-127.0.0.1}:8443:8443"
+    volumes:
+      - ./Caddyfile.edge:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIR:-./state}/pki:/pki:ro
+      - edge-data:/data
+      - edge-config:/config
+    depends_on:
+      guardian-api:
+        condition: service_healthy
+    networks: [public, edge]
+
+  # WireGuard termination and firewall. Holds the server key (a file secret)
+  # and CAP_NET_ADMIN, but runs no Guardian code. Nothing is forwarded.
+  wg-gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/service-gateway/Dockerfile
+    image: guardian-gateway:local
+    restart: unless-stopped
+    command: ["/usr/local/bin/gateway-init.sh"]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
+      net.ipv4.conf.all.rp_filter: "1"
+    environment:
+      WG_PORT: ${WG_PORT:-51820}
+      WG_ADDRESS: ${WG_ADDRESS}
+      WG_MTU: ${WG_MTU:-1380}
+      TUNNEL_CIDR: ${TUNNEL_CIDR}
+      VIP_DNS: ${VIP_DNS}
+      VIP_DAV: ${VIP_DAV}
+      VIP_FLEET: ${VIP_FLEET}
+      VIP_ACS: ${VIP_ACS}
+    ports:
+      - "${WG_PUBLIC_BIND:-0.0.0.0}:${WG_PORT:-51820}:${WG_PORT:-51820}/udp"
+    volumes:
+      - ${STATE_DIR:-./state}/wg/private.key:/run/secrets/wg_private_key:ro
+    networks: [public, control, upstream]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /run/gateway-ready && wg show wg0 >/dev/null && nft list table inet guardian_gw >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  gateway-dns:
+    image: guardian-gateway:local
+    network_mode: "service:wg-gateway"
+    restart: unless-stopped
+    command: ["/bin/sh", "-c", "envsubst < /etc/guardian-gateway/dnsmasq.conf.tmpl > /run/dnsmasq.conf && exec dnsmasq --conf-file=/run/dnsmasq.conf"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      VIP_DNS: ${VIP_DNS}
+      VIP_DAV: ${VIP_DAV}
+      VIP_FLEET: ${VIP_FLEET}
+      VIP_ACS: ${VIP_ACS}
+      DAV_FQDN: ${DAV_FQDN}
+      FLEET_FQDN: ${FLEET_FQDN}
+      ACS_FQDN: ${ACS_FQDN}
+    depends_on:
+      wg-gateway:
+        condition: service_healthy
+
+  gateway-proxy:
+    image: caddy:2.10-alpine
+    network_mode: "service:wg-gateway"
+    <<: *hardening
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      VIP_DAV: ${VIP_DAV}
+      VIP_FLEET: ${VIP_FLEET}
+      VIP_ACS: ${VIP_ACS}
+      DAV_FQDN: ${DAV_FQDN}
+      FLEET_FQDN: ${FLEET_FQDN}
+      ACS_FQDN: ${ACS_FQDN}
+      UPSTREAM_DAV: ${UPSTREAM_DAV}
+      UPSTREAM_FLEET: ${UPSTREAM_FLEET}
+      UPSTREAM_ACS: ${UPSTREAM_ACS}
+    volumes:
+      - ./Caddyfile.gateway:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIR:-./state}/pki:/pki:ro
+      - gateway-proxy-data:/data
+    tmpfs:
+      - /config
+    depends_on:
+      wg-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Applies Guardian's WireGuard peer state to wg0. Root inside its own
+  # namespace but with the single capability NET_ADMIN and no listener that
+  # is reachable from any network (it only serves loopback).
+  guardian-reconciler:
+    image: guardian-gateway:local
+    network_mode: "service:wg-gateway"
+    restart: unless-stopped
+    command: ["/usr/local/bin/guardian"]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    environment:
+      GUARDIAN_LISTEN_ADDR: 127.0.0.1:8080
+      GUARDIAN_DATABASE_URL: postgres://guardian:${POSTGRES_PASSWORD}@postgres:5432/guardian?sslmode=disable
+      GUARDIAN_PUBLIC_URL: ${GUARDIAN_PUBLIC_URL}
+      GUARDIAN_ENV: production
+      GUARDIAN_WIREGUARD_INTERFACE: wg0
+    depends_on:
+      wg-gateway:
+        condition: service_healthy
+      guardian-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/guardian", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Projects the Guardian service policy (grants) onto the nftables sets.
+  guardian-acl:
+    image: guardian-gateway:local
+    network_mode: "service:wg-gateway"
+    restart: unless-stopped
+    command: ["/usr/local/bin/guardian-gateway-acl", "-interval", "2s", "-stale-ttl", "30s"]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    environment:
+      GUARDIAN_DATABASE_URL: postgres://guardian:${POSTGRES_PASSWORD}@postgres:5432/guardian?sslmode=disable
+    depends_on:
+      wg-gateway:
+        condition: service_healthy
+      guardian-api:
+        condition: service_healthy
+
+networks:
+  public: {}
+  edge:
+    internal: true
+  control:
+    internal: true
+  upstream:
+    internal: true
+
+volumes:
+  postgres-data:
+  edge-data:
+  edge-config:
+  gateway-proxy-data:

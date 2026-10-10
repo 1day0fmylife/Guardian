@@ -610,3 +610,78 @@ func testServicePolicyMigrationUpgrade(t *testing.T, st *Store) {
 		t.Fatalf("policy after upgrade = %+v err=%v", policy, err)
 	}
 }
+
+func TestServiceAccessSnapshotMatchesDevicePolicy(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, st *Store) {
+		ctx := context.Background()
+		meta := testActor(t, st)
+		allowedDev, _ := enrollActiveDevice(t, st)
+		ungranted, _ := enrollActiveDevice(t, st)
+		suspended, _ := enrollActiveDevice(t, st)
+		revoked, _ := enrollActiveDevice(t, st)
+
+		for _, id := range []string{"sunkardav", "sunkarcwmp-acs", "admiral-device"} {
+			def, _ := st.GetServiceDefinition(ctx, id)
+			in := davInput(true)
+			in.DisplayName, in.InternalDNSName = def.DisplayName, def.InternalDNSName
+			if _, err := st.UpdateServiceDefinition(ctx, meta, id, def.Revision, in); err != nil {
+				t.Fatalf("enable %s: %v", id, err)
+			}
+		}
+		if _, err := st.SetDeviceScopes(ctx, meta, allowedDev.ID, domain.DeviceScopes{GroupIDs: []string{"field"}}); err != nil {
+			t.Fatalf("scopes: %v", err)
+		}
+		grants := []struct{ svc, scope, id string }{
+			{"sunkardav", "device", allowedDev.ID},
+			{"sunkarcwmp-acs", "group", "field"},
+			{"sunkardav", "device", suspended.ID},
+			{"sunkardav", "device", revoked.ID},
+		}
+		for _, g := range grants {
+			if _, err := st.SetServiceGrant(ctx, meta, g.svc, g.scope, g.id, "allow"); err != nil {
+				t.Fatalf("grant %+v: %v", g, err)
+			}
+		}
+		if _, err := st.SuspendDeviceVPNAndQueueDisconnect(ctx, suspended.ID); err != nil {
+			t.Fatalf("suspend: %v", err)
+		}
+		if _, err := st.BeginDeviceVPNRevocation(ctx, revoked.ID); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+
+		snap, err := st.ServiceAccessSnapshot(ctx)
+		if err != nil {
+			t.Fatalf("ServiceAccessSnapshot: %v", err)
+		}
+		if len(snap.Targets) != 1 {
+			t.Fatalf("targets = %+v, want only the active granted device", snap.Targets)
+		}
+		got := snap.Targets[0]
+		if got.DeviceID != allowedDev.ID || strings.Join(got.ServiceIDs, ",") != "sunkarcwmp-acs,sunkardav" {
+			t.Fatalf("target = %+v", got)
+		}
+		if !got.Address.Is4() {
+			t.Fatalf("address = %v", got.Address)
+		}
+		policy, err := st.DeviceServicePolicy(ctx, allowedDev.ID)
+		if err != nil || strings.Join(serviceIDs(policy), ",") != "sunkarcwmp-acs,sunkardav" {
+			t.Fatalf("device policy disagrees with snapshot: %+v err=%v", policy, err)
+		}
+		if snap.PolicyRevision > policy.Revision {
+			t.Fatalf("snapshot revision %d is newer than device policy %d", snap.PolicyRevision, policy.Revision)
+		}
+		_ = ungranted
+	})
+}
+
+func TestParsePeerAddress(t *testing.T) {
+	cases := map[string]bool{
+		"10.77.0.2": true, "10.77.0.2/32": true, "::ffff:10.77.0.2": true,
+		"": false, "10.77.0.0/24": false, "garbage": false, "10.77.0.2/33": false,
+	}
+	for raw, ok := range cases {
+		if _, got := parsePeerAddress(raw); got != ok {
+			t.Errorf("parsePeerAddress(%q) ok=%v, want %v", raw, got, ok)
+		}
+	}
+}

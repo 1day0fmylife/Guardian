@@ -1,0 +1,22 @@
+[Unit]
+Description=Guardian API (unprivileged, control-plane only)
+After=network-online.target
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/guardian-gateway/guardian.env
+Environment=GUARDIAN_LISTEN_ADDR=127.0.0.1:8080
+Environment=GUARDIAN_WIREGUARD_INTERFACE=
+ExecStart=/usr/local/bin/guardian
+Restart=on-failure
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

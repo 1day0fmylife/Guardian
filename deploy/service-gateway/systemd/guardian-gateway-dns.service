@@ -1,0 +1,18 @@
+[Unit]
+Description=Guardian service gateway DNS (authoritative for service names only)
+After=guardian-gateway-network.service
+Requires=guardian-gateway-network.service
+
+[Service]
+EnvironmentFile=/etc/guardian-gateway/gateway.env
+ExecStartPre=/bin/sh -c 'envsubst < /etc/guardian-gateway/dnsmasq.conf.tmpl > /run/guardian-gateway-dnsmasq.conf'
+ExecStart=/usr/sbin/dnsmasq --conf-file=/run/guardian-gateway-dnsmasq.conf --keep-in-foreground
+Restart=on-failure
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

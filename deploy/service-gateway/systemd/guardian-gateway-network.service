@@ -1,0 +1,24 @@
+[Unit]
+Description=Guardian service gateway: WireGuard interface, service VIPs and firewall
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/guardian-gateway/gateway.env
+# gateway-init.sh and the *.tmpl files come from deploy/service-gateway.
+ExecStart=/usr/local/sbin/gateway-init.sh
+ExecStopPost=-/usr/sbin/nft delete table inet guardian_gw
+Restart=on-failure
+RuntimeDirectory=guardian-gateway
+# Needs root for netlink, but only the capabilities it uses.
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

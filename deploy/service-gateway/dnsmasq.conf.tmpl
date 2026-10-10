@@ -1,0 +1,12 @@
+# Authoritative-only resolver for the service names, bound to the DNS VIP.
+# No upstream resolvers: every other name is refused, nothing is recursed.
+no-daemon
+no-resolv
+no-hosts
+bind-interfaces
+listen-address=${VIP_DNS}
+port=53
+cache-size=0
+address=/${DAV_FQDN}/${VIP_DAV}
+address=/${FLEET_FQDN}/${VIP_FLEET}
+address=/${ACS_FQDN}/${VIP_ACS}

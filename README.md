@@ -59,6 +59,10 @@ WireGuard private keys are generated on the managed device. Guardian stores only
 
 WireGuard peer changes are revisioned. Key rotation preserves the previous public key until the exact desired revision has been applied, so the old peer can be removed safely. Revocation is two-phase: the peer is removed first, and only after successful reconciliation are the address lease released and device credentials revoked.
 
+## Service gateway
+
+Devices reach SunkarDAV, Admiral and SunkarCWMP ACS only through a WireGuard-terminated service gateway whose firewall mirrors the Guardian service grants. See `docs/service-catalog.md` and `docs/service-gateway.md`; the production reference lives in `deploy/service-gateway/` (the root `compose.yaml` is development only).
+
 ## Local WireGuard provider
 
 Guardian can operate either as a control plane only or reconcile peers directly to an existing local WireGuard interface.

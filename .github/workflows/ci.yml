@@ -65,3 +65,11 @@ jobs:
       - uses: actions/checkout@v7
       - name: Validate Compose
         run: docker compose config --quiet
+
+  service-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Service gateway acceptance (WireGuard, nftables, DNS, TLS)
+        run: deploy/service-gateway/scripts/verify.sh

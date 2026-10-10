@@ -1,0 +1,35 @@
+# Test override: stub upstream services on the internal upstream network,
+# deterministic edge host names and no host port publishing. Used by
+# scripts/verify.sh together with compose.yaml.
+services:
+  sunkardav:
+    image: caddy:2.10-alpine
+    environment: { STUB_NAME: sunkardav }
+    volumes:
+      - ./tests/stub.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIR}/pki:/pki:ro
+    networks: [upstream]
+  admiral:
+    image: caddy:2.10-alpine
+    environment: { STUB_NAME: admiral-device }
+    volumes:
+      - ./tests/stub.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIR}/pki:/pki:ro
+    networks: [upstream]
+  sunkarcwmp-acs:
+    image: caddy:2.10-alpine
+    environment: { STUB_NAME: sunkarcwmp-acs }
+    volumes:
+      - ./tests/stub.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIR}/pki:/pki:ro
+    networks: [upstream]
+
+  edge:
+    ports: !reset []
+    networks:
+      public:
+        aliases: [guardian.test, admin.guardian.test]
+      edge: {}
+
+  wg-gateway:
+    ports: !reset []

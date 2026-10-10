@@ -1,0 +1,20 @@
+[Unit]
+Description=Guardian service policy to nftables sync
+After=guardian-gateway-network.service
+Requires=guardian-gateway-network.service
+
+[Service]
+User=guardian-gw
+Group=guardian-gw
+EnvironmentFile=/etc/guardian-gateway/guardian.env
+ExecStart=/usr/local/bin/guardian-gateway-acl -interval 2s -stale-ttl 30s
+Restart=always
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

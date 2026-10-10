@@ -1,0 +1,23 @@
+[Unit]
+Description=Guardian WireGuard peer reconciler
+After=guardian-gateway-network.service guardian-api.service
+Requires=guardian-gateway-network.service
+
+[Service]
+User=guardian-gw
+Group=guardian-gw
+EnvironmentFile=/etc/guardian-gateway/guardian.env
+Environment=GUARDIAN_LISTEN_ADDR=127.0.0.1:18080
+Environment=GUARDIAN_WIREGUARD_INTERFACE=wg0
+ExecStart=/usr/local/bin/guardian
+Restart=on-failure
+# Non-root: the only privilege is netlink configuration of wg0.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
