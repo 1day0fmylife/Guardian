@@ -322,7 +322,7 @@ func TestDeviceEffectivePolicyIsPerDeviceAndSecretFree(t *testing.T) {
 		}
 		var decoded map[string]any
 		_ = json.Unmarshal(raw, &decoded)
-		allowedTop := map[string]bool{"device_id": true, "access_state": true, "revision": true, "generated_at": true, "services": true}
+		allowedTop := map[string]bool{"device_id": true, "access_state": true, "revision": true, "generated_at": true, "expires_at": true, "mandatory_vpn": true, "services": true}
 		for key := range decoded {
 			if !allowedTop[key] {
 				t.Errorf("unexpected top-level field %q", key)

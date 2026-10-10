@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,12 +19,15 @@ const (
 )
 
 type deviceSignal struct {
-	Type    string `json:"type"`
-	Version int    `json:"version,omitempty"`
+	Type     string `json:"type"`
+	Version  int    `json:"version,omitempty"`
+	Revision int64  `json:"revision,omitempty"`
 }
 
 type deviceSignalSubscriber struct {
 	wake       chan deviceSignal
+	policy     chan struct{}
+	revision   int64
 	reauth     chan struct{}
 	reauthOnce sync.Once
 }
@@ -38,7 +42,7 @@ func newDeviceSignalHub() *deviceSignalHub {
 }
 
 func (h *deviceSignalHub) subscribe(deviceID string) (*deviceSignalSubscriber, func()) {
-	subscriber := &deviceSignalSubscriber{wake: make(chan deviceSignal, 1), reauth: make(chan struct{})}
+	subscriber := &deviceSignalSubscriber{wake: make(chan deviceSignal, 1), policy: make(chan struct{}, 1), reauth: make(chan struct{})}
 	h.mu.Lock()
 	if h.subscribers[deviceID] == nil {
 		h.subscribers[deviceID] = make(map[*deviceSignalSubscriber]struct{})
@@ -74,6 +78,34 @@ func (h *deviceSignalHub) publish(deviceID string, signal deviceSignal) {
 			// durable in the database and reconnect also causes an immediate poll.
 		}
 	}
+}
+
+// Policy hints have their own coalesced queue so command traffic cannot hide
+// revocation. The maximum committed revision wins, including reordered writers.
+func (h *deviceSignalHub) publishPolicy(deviceID string, revision int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, subscribers := range h.subscribers {
+		if deviceID != "" && id != deviceID {
+			continue
+		}
+		for subscriber := range subscribers {
+			if revision <= subscriber.revision {
+				continue
+			}
+			subscriber.revision = revision
+			select {
+			case subscriber.policy <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (h *deviceSignalHub) policyRevision(subscriber *deviceSignalSubscriber) int64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return subscriber.revision
 }
 
 var deviceSignalHubs sync.Map // map[*Server]*deviceSignalHub
@@ -143,6 +175,11 @@ func (s *Server) serveDeviceSignals(conn *websocket.Conn, principal domain.Devic
 		return
 	}
 
+	credentialHash := security.HashToken(deviceToken(conn.Request().Header.Get("Authorization")))
+	if err := s.refreshDeviceSignalState(conn.Request().Context(), principal.DeviceID, credentialHash); err != nil {
+		return
+	}
+
 	keepalive := time.NewTicker(deviceSignalKeepalive)
 	defer keepalive.Stop()
 	for {
@@ -150,16 +187,39 @@ func (s *Server) serveDeviceSignals(conn *websocket.Conn, principal domain.Devic
 		case <-subscriber.reauth:
 			_ = sendDeviceSignal(conn, deviceSignal{Type: "reauth_required"})
 			return
+		case <-subscriber.policy:
+			revision := signalHubFor(s).policyRevision(subscriber)
+			if err := sendDeviceSignal(conn, deviceSignal{Type: "policy_changed", Revision: revision}); err != nil {
+				return
+			}
 		case signal := <-subscriber.wake:
 			if err := sendDeviceSignal(conn, signal); err != nil {
 				return
 			}
 		case <-keepalive.C:
+			// Recheck durable state even when mutations came from another instance.
+			if err := s.refreshDeviceSignalState(conn.Request().Context(), principal.DeviceID, credentialHash); err != nil {
+				_ = sendDeviceSignal(conn, deviceSignal{Type: "reauth_required"})
+				return
+			}
 			if err := sendDeviceSignal(conn, deviceSignal{Type: "keepalive"}); err != nil {
 				return
 			}
 		}
 	}
+}
+
+// refreshDeviceSignalState uses the database, never cached authorization.
+func (s *Server) refreshDeviceSignalState(ctx context.Context, deviceID, credentialHash string) error {
+	if _, err := s.store.DevicePrincipalByCredential(ctx, credentialHash); err != nil {
+		return err
+	}
+	revision, err := s.store.ServicePolicyRevision(ctx)
+	if err != nil {
+		return err
+	}
+	signalHubFor(s).publishPolicy(deviceID, revision)
+	return nil
 }
 
 func sendDeviceSignal(conn *websocket.Conn, signal deviceSignal) error {
@@ -184,6 +244,9 @@ func (s *Server) deviceCommandSignalMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		signalHubFor(s).publish(deviceID, deviceSignal{Type: signalType})
+		if revision, err := s.store.ServicePolicyRevision(r.Context()); err == nil {
+			signalHubFor(s).publishPolicy(deviceID, revision)
+		}
 	})
 }
 

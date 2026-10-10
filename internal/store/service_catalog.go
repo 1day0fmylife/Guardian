@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
 	"github.com/1day0fmylife/Guardian/internal/security"
@@ -781,12 +782,15 @@ func (s *Store) DeviceServicePolicy(ctx context.Context, deviceID string) (domai
 	if err != nil {
 		return domain.DeviceServicePolicy{}, err
 	}
+	now := time.Now().UTC()
 	policy := domain.DeviceServicePolicy{
-		DeviceID:    deviceID,
-		AccessState: evaluated.accessState,
-		Revision:    evaluated.revision,
-		GeneratedAt: nowText(),
-		Services:    []domain.DeviceServiceEndpoint{},
+		DeviceID:     deviceID,
+		AccessState:  evaluated.accessState,
+		Revision:     evaluated.revision,
+		GeneratedAt:  now.Format(time.RFC3339Nano),
+		ExpiresAt:    now.Add(5 * time.Minute).Format(time.RFC3339Nano),
+		MandatoryVPN: true,
+		Services:     []domain.DeviceServiceEndpoint{},
 	}
 	for i, def := range evaluated.definitions {
 		if !evaluated.decisions[i].Allowed {
