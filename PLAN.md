@@ -159,7 +159,8 @@ Status:
 - [x] Tenant/site/group/device grants with deterministic precedence, deny-by-default and revocation history.
 - [x] `services.read` / `services.manage` permissions; mutations audited in the same transaction.
 - [x] Admin API and the non-secret `GET /api/v1/device/services` effective-policy endpoint.
-- [ ] Gateway enforcement of the policy (G-02/G-03), device refresh over the WebSocket wake channel (G-04), operator WebUI (G-06).
+- [x] Service gateway reference deployment (G-02): `deploy/service-gateway/`, `docs/service-gateway.md`; grants are projected to nftables sets by `guardian-gateway-acl`; acceptance test `scripts/verify.sh`.
+- [ ] Peer key/address binding and L7 identity policy (G-03), device refresh over the WebSocket wake channel (G-04), staged reconciliation SLOs (G-05), operator WebUI (G-06).
 
 ## Phase 4 — command and telemetry plane
 

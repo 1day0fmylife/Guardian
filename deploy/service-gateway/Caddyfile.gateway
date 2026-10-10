@@ -1,0 +1,59 @@
+# Service gateway proxy. Runs inside the WireGuard gateway network namespace
+# and binds ONLY to the per-service VIPs on the tunnel side. TLS uses the
+# private CA from scripts/gen-pki.sh (or your own certificate files).
+{
+	auto_https off
+	admin off
+}
+
+# Loopback-only health endpoint used by the container healthcheck.
+http://127.0.0.1:8081 {
+	bind 127.0.0.1
+	respond /healthz "ok" 200
+}
+
+(upstream_tls) {
+	transport http {
+		tls_trust_pool file /pki/upstream-ca.pem
+	}
+}
+
+https://{$DAV_FQDN} {
+	bind {$VIP_DAV}
+	tls /pki/gateway.crt /pki/gateway.key
+	reverse_proxy {$UPSTREAM_DAV} {
+		import upstream_tls
+		# Client-supplied forwarding headers are not identity.
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+		header_up -Forwarded
+		header_up -X-Real-IP
+	}
+}
+
+https://{$FLEET_FQDN} {
+	bind {$VIP_FLEET}
+	tls /pki/gateway.crt /pki/gateway.key
+	reverse_proxy {$UPSTREAM_FLEET} {
+		import upstream_tls
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+		header_up -Forwarded
+		header_up -X-Real-IP
+	}
+}
+
+https://{$ACS_FQDN} {
+	bind {$VIP_ACS}
+	tls /pki/gateway.crt /pki/gateway.key
+	reverse_proxy {$UPSTREAM_ACS} {
+		import upstream_tls
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Proto
+		header_up -Forwarded
+		header_up -X-Real-IP
+	}
+}

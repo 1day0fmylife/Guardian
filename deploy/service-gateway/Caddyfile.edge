@@ -1,0 +1,49 @@
+# Guardian edge. This is NOT the service gateway: it only fronts the Guardian
+# API/WebUI. Two separate listeners:
+#   :443   public enrollment/device channel, exposes /api/v1/device/* only
+#   :8443  management (WebUI + admin API), publish it on a management address
+{
+	admin off
+}
+
+{$GUARDIAN_PUBLIC_HOST} {
+	tls {$EDGE_TLS}
+	encode zstd gzip
+
+	@device path /api/v1/device/*
+	handle @device {
+		reverse_proxy guardian-api:8080
+	}
+	handle /healthz {
+		reverse_proxy guardian-api:8080
+	}
+	handle {
+		respond "not found" 404
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+https://{$GUARDIAN_MGMT_HOST}:8443 {
+	tls {$EDGE_TLS}
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy guardian-api:8080
+	}
+	handle /healthz {
+		reverse_proxy guardian-api:8080
+	}
+	handle /readyz {
+		reverse_proxy guardian-api:8080
+	}
+	handle {
+		reverse_proxy guardian-web:80
+	}
+	log {
+		output stdout
+		format json
+	}
+}

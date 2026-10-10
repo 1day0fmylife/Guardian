@@ -1,3 +1,6 @@
+# DEVELOPMENT ONLY: plain HTTP on :80, no TLS, used by the root compose.yaml.
+# Do not deploy this file. The production reference is deploy/service-gateway
+# (separate edge and WireGuard-only service listeners, see docs/service-gateway.md).
 {
 	auto_https off
 }

@@ -1,0 +1,9 @@
+{
+	auto_https off
+	admin off
+}
+
+https://:8443 {
+	tls /pki/stub.crt /pki/stub.key
+	respond "{$STUB_NAME}-ok" 200
+}

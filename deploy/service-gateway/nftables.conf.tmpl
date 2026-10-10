@@ -1,0 +1,52 @@
+# Rendered by gateway-init.sh. Default policy is drop everywhere.
+#
+# * No packet is ever forwarded: peers cannot reach upstream networks, the
+#   control network or each other. Services are local destinations (INPUT).
+# * The only thing accepted from non-tunnel interfaces is the WireGuard
+#   handshake/data port.
+# * A tunnel peer reaches a service VIP only when its address is in that
+#   service's set. The sets are owned by guardian-gateway-acl and mirror the
+#   Guardian service policy (G-01); they start empty, i.e. deny.
+add table inet ${NFT_TABLE}
+delete table inet ${NFT_TABLE}
+
+table inet ${NFT_TABLE} {
+    set svc_sunkardav_v4 {
+        type ipv4_addr
+    }
+    set svc_admiral_device_v4 {
+        type ipv4_addr
+    }
+    set svc_sunkarcwmp_acs_v4 {
+        type ipv4_addr
+    }
+
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        ct state invalid drop
+        ct state established,related accept
+        iifname "lo" accept
+
+        # WireGuard transport from the public side.
+        iifname != "${WG_INTERFACE}" udp dport ${WG_PORT} accept
+
+        # Everything from the tunnel must come from the tunnel address space.
+        iifname "${WG_INTERFACE}" ip saddr != ${TUNNEL_CIDR} counter drop
+
+        # DNS for the three service names, served on the DNS VIP only.
+        iifname "${WG_INTERFACE}" ip daddr ${VIP_DNS} udp dport 53 accept
+        iifname "${WG_INTERFACE}" ip daddr ${VIP_DNS} tcp dport 53 accept
+
+        # Per-service HTTPS, only for peers that Guardian currently allows.
+        iifname "${WG_INTERFACE}" ip saddr @svc_sunkardav_v4 ip daddr ${VIP_DAV} tcp dport 443 accept
+        iifname "${WG_INTERFACE}" ip saddr @svc_admiral_device_v4 ip daddr ${VIP_FLEET} tcp dport 443 accept
+        iifname "${WG_INTERFACE}" ip saddr @svc_sunkarcwmp_acs_v4 ip daddr ${VIP_ACS} tcp dport 443 accept
+
+        iifname "${WG_INTERFACE}" counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+}
