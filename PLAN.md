@@ -336,3 +336,15 @@ Evidence and operational limits: `docs/g-07-implementation.md`.
 
 Contract: `docs/tenant-isolation.md`; procedures: `docs/operations-runbook.md`;
 verification evidence: `docs/g-08-implementation.md`.
+
+## G-09 — measurement and readiness gate (2026-10-10)
+
+- [x] Audit existing API capability isolation and single-gateway acknowledgement model.
+- [x] Add reproducible SQLite/PostgreSQL snapshot and gateway projection benchmarks.
+- [x] Record baseline, CPU profile and limits in `docs/g-09-readiness.md`.
+- [ ] Collect production-equivalent workload and availability requirements; establish measured need.
+- [ ] Merge and operationally validate G-01..08 before remote-agent implementation.
+- [ ] Authenticated bounded node protocol, per-node leases/fencing/acknowledgements and staged failover acceptance.
+
+User-selected scope is measurements and readiness assessment only. Full G-09
+acceptance remains deferred; this does not enable multi-node operation.

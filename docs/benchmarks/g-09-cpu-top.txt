@@ -1,0 +1,24 @@
+File: guardian-g09-scale.test
+Build ID: ac496d765af7074a8157052e53f34f6d0db3df14
+Type: cpu
+Time: 2026-10-10 21:58:45 +05
+Duration: 2.21s, Total samples = 2.04s (92.32%)
+Showing nodes accounting for 1.64s, 80.39% of 2.04s total
+Dropped 116 nodes (cum <= 0.01s)
+Showing top 15 nodes out of 125
+      flat  flat%   sum%        cum   cum%
+     0.45s 22.06% 22.06%      1.51s 74.02%  github.com/1day0fmylife/Guardian/internal/domain.EvaluateServiceAccess
+     0.24s 11.76% 33.82%      0.24s 11.76%  memeqbody
+     0.19s  9.31% 43.14%      0.47s 23.04%  internal/runtime/maps.(*Map).getWithoutKeySmallFastStr
+     0.18s  8.82% 51.96%      0.18s  8.82%  runtime.duffcopy
+     0.16s  7.84% 59.80%      0.16s  7.84%  aeshashbody
+     0.08s  3.92% 63.73%      0.55s 26.96%  runtime.mapaccess2_faststr
+     0.07s  3.43% 67.16%      0.10s  4.90%  github.com/1day0fmylife/Guardian/internal/domain.scopeMatches (inline)
+     0.06s  2.94% 70.10%      0.06s  2.94%  github.com/1day0fmylife/Guardian/internal/domain.ValidGrantEffect (inline)
+     0.06s  2.94% 73.04%      0.29s 14.22%  modernc.org/sqlite/lib._sqlite3VdbeExec
+     0.04s  1.96% 75.00%      0.04s  1.96%  internal/runtime/syscall.Syscall6
+     0.03s  1.47% 76.47%      0.03s  1.47%  internal/runtime/maps.(*groupReference).key (inline)
+     0.02s  0.98% 77.45%      0.02s  0.98%  modernc.org/libc.(*TLS).Free
+     0.02s  0.98% 78.43%      0.02s  0.98%  modernc.org/libc.Xmemcmp
+     0.02s  0.98% 79.41%      0.02s  0.98%  runtime.mallocgcTiny
+     0.02s  0.98% 80.39%      0.02s  0.98%  runtime.memclrNoHeapPointers

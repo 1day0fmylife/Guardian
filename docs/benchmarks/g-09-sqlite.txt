@@ -1,0 +1,15 @@
+goos: linux
+goarch: amd64
+pkg: github.com/1day0fmylife/Guardian/internal/store
+cpu: Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz
+BenchmarkServiceAccessSnapshot/sqlite/devices_100-8         	       1	   5671314 ns/op	       100.0 devices	  388856 B/op	    8398 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_100-8         	       1	   4346057 ns/op	       100.0 devices	  387688 B/op	    8393 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_100-8         	       1	   3010525 ns/op	       100.0 devices	  389240 B/op	    8395 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_1000-8        	       1	 135328589 ns/op	      1000 devices	 4940856 B/op	   81317 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_1000-8        	       1	 125268360 ns/op	      1000 devices	 4935608 B/op	   81313 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_1000-8        	       1	 142704295 ns/op	      1000 devices	 4943960 B/op	   81323 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_10000-8       	       1	30010582878 ns/op	     10000 devices	54687880 B/op	  810402 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_10000-8       	       1	23487668555 ns/op	     10000 devices	54686536 B/op	  810396 allocs/op
+BenchmarkServiceAccessSnapshot/sqlite/devices_10000-8       	       1	20814490352 ns/op	     10000 devices	54685688 B/op	  810397 allocs/op
+PASS
+ok  	github.com/1day0fmylife/Guardian/internal/store	78.638s
