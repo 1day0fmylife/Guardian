@@ -305,6 +305,9 @@ func (s *Store) ClaimEnrollment(ctx context.Context, token string, input domain.
 	device.Status = "active"
 	device.UpdatedAt = now
 
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return domain.EnrollmentClaimResult{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.EnrollmentClaimResult{}, fmt.Errorf("commit enrollment claim: %w", err)
 	}

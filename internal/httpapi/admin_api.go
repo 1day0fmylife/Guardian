@@ -29,6 +29,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.Handle("GET /api/v1/commands", s.require(rbac.CommandsRead, s.adminListCommands))
 	mux.Handle("GET /api/v1/settings", s.require(rbac.SettingsRead, s.adminGetSettings))
 	mux.Handle("PATCH /api/v1/settings", s.require(rbac.SettingsUpdate, s.adminUpdateSettings))
+	s.registerServiceCatalogRoutes(mux)
 	mux.Handle("/", s.ManagementHandler())
 	return mux
 }

@@ -198,7 +198,12 @@ func (s *Store) SetDeviceSuspended(ctx context.Context, id string, suspended boo
 		value = 1
 		status = "suspended"
 	}
-	result, err := s.db.ExecContext(ctx, s.q(`
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin device suspension update: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, s.q(`
 		UPDATE devices SET suspended = ?, status = ?, updated_at = ? WHERE id = ?
 	`), value, status, nowText(), id)
 	if err != nil {
@@ -207,6 +212,12 @@ func (s *Store) SetDeviceSuspended(ctx context.Context, id string, suspended boo
 	n, err := result.RowsAffected()
 	if err == nil && n == 0 {
 		return ErrNotFound
+	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit device suspension update: %w", err)
 	}
 	return nil
 }

@@ -29,6 +29,7 @@ func (s *Server) ManagementHandler() http.Handler {
 
 	mux.Handle("GET /api/v1/device/me", wrap(s.requireDevice(false, s.deviceMe)))
 	mux.Handle("GET /api/v1/device/config", wrap(s.requireDevice(true, s.deviceConfig)))
+	mux.Handle("GET /api/v1/device/services", wrap(s.requireDevice(false, s.deviceServices)))
 	mux.Handle("GET /api/v1/device/commands", wrap(s.requireDevice(false, s.devicePollCommands)))
 	mux.Handle("POST /api/v1/device/commands/{id}/result", wrap(s.requireDevice(false, s.deviceCommandResult)))
 	mux.Handle("POST /api/v1/device/telemetry", wrap(s.requireDevice(false, s.deviceTelemetry)))

@@ -88,6 +88,9 @@ func (s *Store) BeginDeviceVPNRevocation(ctx context.Context, deviceID string) (
 	`), cmd.ID, cmd.DeviceID, cmd.IdempotencyKey, string(cmd.Payload), cmd.CreatedAt, cmd.ExpiresAt); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("queue revocation disconnect: %w", err)
 	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return domain.DeviceCommand{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("commit VPN revocation: %w", err)
 	}
@@ -147,6 +150,9 @@ func (s *Store) CompleteDeviceVPNRevocation(ctx context.Context, deviceID string
 		UPDATE devices SET status = 'revoked', suspended = 1, updated_at = ? WHERE id = ?
 	`), now, deviceID); err != nil {
 		return fmt.Errorf("finalize revoked device: %w", err)
+	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit revocation completion: %w", err)
@@ -217,6 +223,9 @@ func (s *Store) SuspendDeviceVPNAndQueueDisconnect(ctx context.Context, deviceID
 	`), cmd.ID, deviceID, cmd.IdempotencyKey, string(cmd.Payload), cmd.CreatedAt, cmd.ExpiresAt); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("queue suspend disconnect: %w", err)
 	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return domain.DeviceCommand{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("commit device suspension: %w", err)
 	}
@@ -285,6 +294,9 @@ func (s *Store) ResumeDeviceVPNAndQueueConnect(ctx context.Context, deviceID str
 		VALUES(?, ?, 'connect', 'pending', ?, ?, '{}', ?, ?)
 	`), cmd.ID, deviceID, cmd.IdempotencyKey, string(cmd.Payload), cmd.CreatedAt, cmd.ExpiresAt); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("queue resume connect: %w", err)
+	}
+	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
+		return domain.DeviceCommand{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.DeviceCommand{}, fmt.Errorf("commit device resume: %w", err)

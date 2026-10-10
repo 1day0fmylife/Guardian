@@ -43,6 +43,9 @@ const (
 	RolesUpdate = "roles.update"
 	RolesDelete = "roles.delete"
 
+	ServicesRead   = "services.read"
+	ServicesManage = "services.manage"
+
 	AuditRead = "audit.read"
 
 	SettingsRead   = "settings.read"
@@ -56,6 +59,7 @@ var AllPermissions = []string{
 	ProfilesRead, ProfilesCreate, ProfilesUpdate, ProfilesDelete,
 	PoolsRead, PoolsCreate, PoolsUpdate, PoolsDelete,
 	CommandsRead, CommandsCreate,
+	ServicesRead, ServicesManage,
 	UsersRead, UsersCreate, UsersUpdate, UsersDelete,
 	RolesRead, RolesCreate, RolesUpdate, RolesDelete,
 	AuditRead,
@@ -78,6 +82,7 @@ var DefaultRoles = []RoleDefinition{
 			ProfilesRead, ProfilesCreate, ProfilesUpdate, ProfilesDelete,
 			PoolsRead, PoolsCreate, PoolsUpdate, PoolsDelete,
 			CommandsRead, CommandsCreate,
+			ServicesRead, ServicesManage,
 			UsersRead, UsersCreate, UsersUpdate,
 			RolesRead,
 			AuditRead,
@@ -93,6 +98,7 @@ var DefaultRoles = []RoleDefinition{
 			EnrollmentRead,
 			ProfilesRead, PoolsRead,
 			CommandsRead, CommandsCreate,
+			ServicesRead,
 		},
 	},
 	{
@@ -100,7 +106,7 @@ var DefaultRoles = []RoleDefinition{
 		Description: "Read-only administrative and audit access",
 		Permissions: []string{
 			DevicesRead, EnrollmentRead, ProfilesRead, PoolsRead,
-			CommandsRead, UsersRead, RolesRead, AuditRead, SettingsRead,
+			CommandsRead, ServicesRead, UsersRead, RolesRead, AuditRead, SettingsRead,
 		},
 	},
 	{
