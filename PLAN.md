@@ -36,7 +36,7 @@ Status marks below were checked against `main` at `e5b5946` on 2026-09-28. `[x]`
 Initial roles:
 
 - superadmin — unrestricted platform administration.
-- admin — device, enrollment, profile, address-pool and user administration within assigned scope.
+- admin — permission-based platform device, enrollment, profile, address-pool and user administration; tenant-bound admin principals are not implemented.
 - operator — operational device actions and configuration deployment.
 - auditor — read-only access including audit logs.
 - viewer — read-only operational views excluding sensitive administrative data.
@@ -324,3 +324,15 @@ Status:
 - [x] PostgreSQL/SQLite tests, race detector, vet, command builds, frontend tests/build and monitoring validation passed locally.
 
 Evidence and operational limits: `docs/g-07-implementation.md`.
+
+## G-08 — tenant/network isolation and operations (2026-10-10)
+
+- [x] Immutable site/group tenant ownership, compatible standalone namespace and atomic conflict rejection.
+- [x] Globally non-overlapping tunnel pools and unique active/revoking IP addresses.
+- [x] Migration 009 with legacy backfill and refusal of ambiguous/overlapping state.
+- [x] Cross-tenant negative policy/API/ACL tests and real backup/restore into fresh SQLite/PostgreSQL environments.
+- [x] Runbook for server keys, node recovery, backups, certificates, NAT/MTU/DNS, firewall and decommission/reinstatement.
+- [x] Real gateway acceptance passed: cross-tenant/lateral/spoofing denial, suspend/resume, revocation, IP reuse, recovery and no secrets in logs.
+
+Contract: `docs/tenant-isolation.md`; procedures: `docs/operations-runbook.md`;
+verification evidence: `docs/g-08-implementation.md`.

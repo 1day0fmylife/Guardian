@@ -100,18 +100,22 @@ echo "PASS two devices enrolled and granted ($(client a device_id | cut -c1-8)â€
 echo "(waiting for peer reconciliation and ACL sync)"
 sleep 8
 
-section "device A: only SunkarDAV (headers, spoofing, lateral)"
+section "tenant A: only group-granted SunkarDAV (headers, spoofing, lateral)"
 run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
     -e "EXPECT_ALLOWED=$DAV_FQDN" -e "OTHER_PEER_ADDR=${b_addr%/*}" -e "CHECK_HEADERS=$DAV_FQDN" \
     -e "SPOOF_ADDR=${b_addr%/*}" -e "SPOOF_FQDN=$FLEET_FQDN" | tally
 
-section "device B: Admiral; ACS upstream fails its pin"
+section "tenant B: no tenant-A group access; Admiral; ACS upstream fails its pin"
 run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client b private_key)" -e "CLIENT_ADDRESS=$b_addr" \
-    -e "EXPECT_ALLOWED=$FLEET_FQDN" -e "EXPECT_BADGW=$ACS_FQDN" | tally
+    -e "EXPECT_ALLOWED=$FLEET_FQDN" -e "EXPECT_BADGW=$ACS_FQDN" -e "OTHER_PEER_ADDR=${a_addr%/*}" | tally
 
 section "unprovisioned peer"
 run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(openssl rand -base64 32)" -e "CLIENT_ADDRESS=10.77.0.200/32" \
     -e "EXPECT_TUNNEL=no" -e "EXPECT_ALLOWED=" | tally
+
+section "transfer tenant-A group grant to explicit device override without expanding B access"
+run_tester admin-regrant "${api_env[@]}" -e "DEVICE_ID=$(client a device_id)" \
+    -e "REVOKE_SERVICE=sunkardav" -e "GRANT_SERVICE=sunkardav" -e "REVOKE_SCOPE_TYPE=group" -e "REVOKE_SCOPE_ID=group-a" >/dev/null
 
 section "scope change is atomic for unchanged services"
 hammer=$(docker run -d --network "$net" --cap-add NET_ADMIN -v "$state/pki:/pki:ro" "${common_env[@]}" \
@@ -187,6 +191,12 @@ run_tester admin-suspend -e "API=https://admin.guardian.test:8443" -e "ADMIN_TOK
 sleep 8
 run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
     -e "EXPECT_TUNNEL=any" -e "EXPECT_ALLOWED=" | tally
+
+section "suspended peer reinstate restores only reviewed services"
+run_tester admin-resume "${api_env[@]}" -e "DEVICE_ID=$(client a device_id)"
+sleep 8
+run_tester client "${common_env[@]}" -e "CLIENT_PRIVATE_KEY=$(client a private_key)" -e "CLIENT_ADDRESS=$a_addr" \
+    -e "EXPECT_ALLOWED=$DAV_FQDN" -e "OTHER_PEER_ADDR=${b_addr%/*}" | tally
 
 section "revoked device loses access"
 "${compose[@]}" stop guardian-reconciler >/dev/null

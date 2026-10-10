@@ -59,9 +59,24 @@ admin-setup)
             -d "$(jq -nc --arg u "$uuid" --arg n "gw-$name" --arg k "$pub" '{device_uuid:$u,device_name:$n,public_key:$k}')")
         dev=$(jq -r .device.id <<<"$claim"); addr=$(jq -r .wireguard.assigned_address <<<"$claim")
         [[ "$dev" != null && "$addr" != null ]] || { log "enrollment of $name failed"; exit 1; }
+        scopes=$(jq -nc --arg n "$name" '{tenant_id:("tenant-"+$n),site_id:("site-"+$n),group_ids:["group-"+$n]}')
+        res=$(api PUT "/api/v1/devices/$dev/scopes" "$scopes")
+        [[ $(jq -r .scopes.tenant_id <<<"$res") == "tenant-$name" ]] || { log "tenant assignment failed"; exit 1; }
+        if [[ $name == b ]]; then
+            # A global admin still cannot bind A's group into B's tenant.
+            body='{"tenant_id":"tenant-b","site_id":"site-b","group_ids":["group-a"]}'
+            code=$(curl -sk --max-time 15 -X PUT "$API/api/v1/devices/$dev/scopes" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -d "$body" -o /tmp/tenant-conflict -w '%{http_code}')
+            [[ $code == 409 && $(jq -r .error.code /tmp/tenant-conflict) == scope_tenant_conflict ]] || { log "cross-tenant membership was not rejected"; exit 1; }
+        fi
         IFS=, read -ra svcs <<<"$granted"
         for svc in "${svcs[@]}"; do
-            res=$(api POST "/api/v1/services/$svc/grants" "$(jq -nc --arg d "$dev" '{scope_type:"device",scope_id:$d,effect:"allow"}')")
+            if [[ $name == a ]]; then
+                grant_body=$(jq -nc --arg g "group-$name" '{scope_type:"group",scope_id:$g,effect:"allow"}')
+            else
+                grant_body=$(jq -nc --arg d "$dev" '{scope_type:"device",scope_id:$d,effect:"allow"}')
+            fi
+            res=$(api POST "/api/v1/services/$svc/grants" "$grant_body")
             [[ $(jq -r .grant.effect <<<"$res") == allow ]] || { log "grant $svc->$name failed: $res"; exit 1; }
         done
         clients=$(jq -c --arg n "$name" --arg d "$dev" --arg k "$priv" --arg a "$addr" --arg g "$granted" --arg t "$(jq -r .device_credential.token <<<"$claim")" \
@@ -110,7 +125,7 @@ admin-enroll)
 
 admin-regrant)
     : "${API:?}" "${ADMIN_TOKEN:?}" "${DEVICE_ID:?}" "${REVOKE_SERVICE:?}" "${GRANT_SERVICE:?}"
-    gid=$(api GET "/api/v1/services/$REVOKE_SERVICE/grants?scope_type=device&scope_id=$DEVICE_ID" | jq -r '.items[0].id')
+    gid=$(api GET "/api/v1/services/$REVOKE_SERVICE/grants?scope_type=${REVOKE_SCOPE_TYPE:-device}&scope_id=${REVOKE_SCOPE_ID:-$DEVICE_ID}" | jq -r '.items[0].id')
     [[ -n "$gid" && "$gid" != null ]] || { log "no grant to revoke"; exit 1; }
     api POST "/api/v1/services/$GRANT_SERVICE/grants" "$(jq -nc --arg d "$DEVICE_ID" '{scope_type:"device",scope_id:$d,effect:"allow"}')" >/dev/null
     api DELETE "/api/v1/services/$REVOKE_SERVICE/grants/$gid" | jq -c .grant.revoked_at
@@ -124,6 +139,11 @@ admin-grant)
 admin-revoke)
     : "${API:?}" "${ADMIN_TOKEN:?}" "${DEVICE_ID:?}"
     api POST "/api/v1/devices/$DEVICE_ID/revoke" | jq -c .
+    ;;
+
+admin-resume)
+    : "${API:?}" "${ADMIN_TOKEN:?}" "${DEVICE_ID:?}"
+    api POST "/api/v1/devices/$DEVICE_ID/resume" | jq -e '.connect_command.type == "connect"' >/dev/null
     ;;
 
 admin-suspend)

@@ -600,7 +600,16 @@ func (s *Store) loadDeviceScopes(ctx context.Context, q sqlQueryer, deviceID str
 			scopes.GroupIDs = append(scopes.GroupIDs, scopeID)
 		}
 	}
-	return scopes, rows.Err()
+	if err := rows.Err(); err != nil {
+		return scopes, err
+	}
+	if err := rows.Close(); err != nil {
+		return scopes, err
+	}
+	if err := s.validateScopeOwners(ctx, q, scopes); err != nil {
+		return domain.DeviceScopes{}, err
+	}
+	return scopes, nil
 }
 
 func (s *Store) deviceExists(ctx context.Context, q sqlQueryer, deviceID string) error {
@@ -642,6 +651,11 @@ func (s *Store) SetDeviceScopes(ctx context.Context, meta AuditMeta, deviceID st
 	}
 	defer tx.Rollback()
 
+	// Serialize membership and owner changes before reading the current scopes.
+	if _, err := tx.ExecContext(ctx, "UPDATE service_policy_state SET revision = revision WHERE id = 1"); err != nil {
+		return DeviceScopesResult{}, fmt.Errorf("lock scope policy: %w", err)
+	}
+
 	if err := s.deviceExists(ctx, tx, deviceID); err != nil {
 		return DeviceScopesResult{}, err
 	}
@@ -655,6 +669,10 @@ func (s *Store) SetDeviceScopes(ctx context.Context, meta AuditMeta, deviceID st
 			return DeviceScopesResult{}, err
 		}
 		return DeviceScopesResult{Scopes: current, PolicyRevision: revision}, nil
+	}
+
+	if err := s.bindScopeOwnersTx(ctx, tx, scopes); err != nil {
+		return DeviceScopesResult{}, err
 	}
 
 	if _, err := tx.ExecContext(ctx, s.q("DELETE FROM device_scope_memberships WHERE device_id = ?"), deviceID); err != nil {

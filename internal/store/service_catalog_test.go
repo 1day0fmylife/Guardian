@@ -774,9 +774,18 @@ func TestServiceAccessSnapshotDeniesAmbiguousTunnelAddress(t *testing.T) {
 	forEachDialect(t, func(t *testing.T, st *Store) {
 		ctx := context.Background()
 		meta := testActor(t, st)
-		// Two pools with the same CIDR hand out the same address.
+		// Offline corruption must remain fail-closed even beyond creation constraints.
 		first := enrollOnCIDR(t, st, "one", "10.211.0.0/29", "10.211.0.1", 10)
-		second := enrollOnCIDR(t, st, "two", "10.211.0.0/29", "10.211.0.1", 20)
+		second := enrollOnCIDR(t, st, "two", "10.212.0.0/29", "10.212.0.1", 20)
+		if _, err := st.db.ExecContext(ctx, "DROP INDEX idx_address_leases_global_active"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.ExecContext(ctx, st.q("UPDATE address_leases SET address = ? WHERE device_id = ?"), "10.211.0.2", second.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.ExecContext(ctx, st.q("UPDATE wireguard_peers SET assigned_address = ? WHERE device_id = ?"), "10.211.0.2/32", second.ID); err != nil {
+			t.Fatal(err)
+		}
 		enableDAVForTest(t, st, meta)
 		for _, dev := range []domain.Device{first, second} {
 			if _, err := st.SetServiceGrant(ctx, meta, "sunkardav", "device", dev.ID, "allow"); err != nil {
