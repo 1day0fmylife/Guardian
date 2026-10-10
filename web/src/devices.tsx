@@ -1,4 +1,5 @@
 import React from 'react'
+import { DeviceServices } from './services'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
@@ -186,6 +187,7 @@ export function DeviceDetailPage({ deviceId }: { deviceId: string }) {
           <InfoRow label="Config revision" value={telemetry ? `revision ${telemetry.config_revision}` : '—'} />
         </InfoCard>
       </div>
+      <DeviceServices key={deviceId} deviceId={deviceId} permissions={permissions} />
       <RuntimeTelemetry telemetry={telemetry} />
       {telemetry?.error_code && <article className="alert danger runtime-error"><strong>{telemetry.error_code}</strong><span>{telemetry.error_message || 'Device reported a runtime error.'}</span></article>}
       {canReadCommands && <CommandHistory query={commands} />}

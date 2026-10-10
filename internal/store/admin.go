@@ -337,11 +337,26 @@ func (s *Store) ListPermissions(ctx context.Context) ([]string, error) {
 }
 
 func (s *Store) ListAuditEvents(ctx context.Context, limit, offset int) ([]domain.AuditEvent, int, error) {
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events`).Scan(&total); err != nil {
+	return s.listAuditEvents(ctx, "", nil, limit, offset)
+}
+
+// ListDeviceAuditEvents includes device events and explicit device grant history.
+// Scoped grants and global catalog changes remain in the global audit view.
+func (s *Store) ListDeviceAuditEvents(ctx context.Context, deviceID string, limit, offset int) ([]domain.AuditEvent, int, error) {
+	if _, err := s.GetDevice(ctx, deviceID); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id, COALESCE(actor_user_id, ''), action, resource_type, resource_id, source_ip, request_id, details, created_at FROM audit_events ORDER BY created_at DESC LIMIT ? OFFSET ?`), limit, offset)
+	return s.listAuditEvents(ctx, ` WHERE (resource_type = 'device' AND resource_id = ?) OR
+		(resource_type = 'service_grant' AND resource_id IN
+		(SELECT id FROM service_grants WHERE scope_type = 'device' AND scope_id = ?))`, []any{deviceID, deviceID}, limit, offset)
+}
+
+func (s *Store) listAuditEvents(ctx context.Context, where string, args []any, limit, offset int) ([]domain.AuditEvent, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx, s.q(`SELECT COUNT(*) FROM audit_events`+where), args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, s.q(`SELECT id, COALESCE(actor_user_id, ''), action, resource_type, resource_id, source_ip, request_id, details, created_at FROM audit_events`+where+` ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`), append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

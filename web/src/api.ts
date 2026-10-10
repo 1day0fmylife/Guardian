@@ -59,3 +59,14 @@ export async function listAudit(limit = 100, offset = 0) { const { data } = awai
 export async function listCommands(limit = 100, offset = 0) { const { data } = await api.get<{ items: DeviceCommand[]; total: number; limit: number; offset: number }>('/commands', { params: { limit, offset } }); return data }
 export async function getSettings() { const { data } = await api.get<SystemSettings>('/settings'); return data }
 export async function updateSettings(values: Record<string, string>) { const { data } = await api.patch<SystemSettings>('/settings', { values }); return data }
+
+export type ServiceDefinition = { id: string; revision: number; display_name: string; internal_dns_name: string; protocol: string; port: number; tls_policy: string; allowed_scopes: string[]; enabled: boolean }
+export type ServiceGrant = { id: string; service_id: string; effect: 'allow' | 'deny'; policy_revision: number; revoked_at?: string }
+export type AdminDevicePolicy = { device_id: string; access_state: string; revision: number; scopes: { tenant_id: string; site_id: string; group_ids: string[] }; services: { service_id: string; display_name: string; service_revision: number; allowed: boolean; reason: string; source_scope_type?: string; source_grant_id?: string }[] }
+export async function listServices() { const { data } = await api.get<{ items: ServiceDefinition[] }>('/services'); return data.items }
+export async function updateService(service: ServiceDefinition) { const { id, revision, display_name, internal_dns_name, protocol, port, tls_policy, allowed_scopes, enabled } = service; const input = { display_name, internal_dns_name, protocol, port, tls_policy, allowed_scopes, enabled }; return api.put(`/services/${encodeURIComponent(id)}`, { ...input, expected_revision: revision }) }
+export async function getAdminDevicePolicy(id: string) { const { data } = await api.get<AdminDevicePolicy>(`/devices/${encodeURIComponent(id)}/services`); return data }
+export async function listDeviceGrants(serviceId: string, deviceId: string) { const { data } = await api.get<{ items: ServiceGrant[] }>(`/services/${encodeURIComponent(serviceId)}/grants`, { params: { scope_type: 'device', scope_id: deviceId, limit: 100 } }); return data.items }
+export async function setDeviceGrant(serviceId: string, deviceId: string, effect: 'allow' | 'deny') { return api.post(`/services/${encodeURIComponent(serviceId)}/grants`, { scope_type: 'device', scope_id: deviceId, effect }) }
+export async function revokeServiceGrant(serviceId: string, grantId: string) { return api.delete(`/services/${encodeURIComponent(serviceId)}/grants/${encodeURIComponent(grantId)}`) }
+export async function listDeviceAudit(deviceId: string, offset: number) { const { data } = await api.get<{ items: AuditEvent[]; total: number }>(`/devices/${encodeURIComponent(deviceId)}/audit`, { params: { limit: 20, offset } }); return data }

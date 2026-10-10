@@ -122,7 +122,7 @@ Status:
 - [x] Create, claim and revoke are audited; claim is `POST /api/v1/device/enroll`.
 - [x] The device generates its WireGuard key and sends only the public key; Guardian allocates the address and returns the non-secret profile.
 - [x] Device credentials are device-owned and rotatable (`POST /api/v1/device/credential/rotate`).
-- [ ] The WebUI shows the provisioning URI as text only; it does not render a QR code yet.
+- [x] Local QR rendering of the provisioning URI, manual copy and clearance after expiry/use/revocation (G-06).
 
 ## Phase 3 — WireGuard client lifecycle
 
@@ -161,7 +161,7 @@ Status:
 - [x] Admin API and the non-secret `GET /api/v1/device/services` effective-policy endpoint.
 - [x] Service gateway reference deployment (G-02): `deploy/service-gateway/`, `docs/service-gateway.md`; grants are projected to nftables sets by `guardian-gateway-acl`; acceptance test `scripts/verify.sh`.
 - [x] Peer key/address ↔ device binding verified against the kernel peer table, anti-spoofing and L7 header/pinning policy (G-03), see `docs/service-gateway.md`.
-- [ ] Device refresh over the WebSocket wake channel (G-04), staged reconciliation SLOs (G-05), operator WebUI (G-06).
+- [x] Device refresh over the WebSocket wake channel (G-04), staged reconciliation SLOs (G-05), operator WebUI (G-06).
 
 ## Phase 4 — command and telemetry plane
 
@@ -303,3 +303,14 @@ Status:
   docs/g-05-recovery.md.
 - [ ] Physical-device/installed-stack acceptance remains separate from the
   disposable WireGuard/nftables/TLS fixture.
+
+## G-06 — operator service access and enrollment (2026-10-10)
+
+- [x] Reuse catalog/grants, RBAC, effective-policy API and migrations 006–007.
+- [x] Device detail service decisions/revisions and individual Allow/Deny/Inherit.
+- [x] Revision-checked catalog editing and permission-aware read-only controls.
+- [x] Local one-time provisioning QR with manual copy and bounded display lifetime.
+- [x] Paginated device/individual-grant audit timeline under audit.read.
+- [x] SQLite/PostgreSQL, API negative/RBAC/compatibility and frontend tests;
+  validation evidence in docs/g-06-implementation.md.
+- [ ] Physical-camera and installed-stack acceptance; no hardware claim.
