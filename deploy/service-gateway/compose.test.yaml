@@ -24,6 +24,16 @@ services:
       - ${STATE_DIR}/pki:/pki:ro
     networks: [upstream]
 
+  # Presents a certificate that the CA signed for the same names but with a
+  # different key; used to prove upstream pinning rejects it.
+  rogue:
+    image: caddy:2.10-alpine
+    environment: { STUB_NAME: rogue, STUB_CERT: rogue }
+    volumes:
+      - ./tests/stub.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${STATE_DIR}/pki:/pki:ro
+    networks: [upstream]
+
   edge:
     ports: !reset []
     networks:

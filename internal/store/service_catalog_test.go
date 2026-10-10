@@ -685,3 +685,110 @@ func TestParsePeerAddress(t *testing.T) {
 		}
 	}
 }
+
+func enrollOnCIDR(t *testing.T, st *Store, label, cidr, gateway string, keyFill byte) domain.Device {
+	t.Helper()
+	ctx := context.Background()
+	pool, err := st.CreateAddressPool(ctx, AddressPoolCreate{Name: "bind-pool-" + label, CIDR: cidr, Gateway: gateway})
+	if err != nil {
+		t.Fatalf("CreateAddressPool: %v", err)
+	}
+	profile, err := st.CreateVPNProfile(ctx, VPNProfileCreate{
+		Name: "bind-profile-" + label, ServerPublicKey: testWGKey(keyFill), Endpoint: "vpn.example.test:51820",
+		AllowedIPs: []string{"10.0.0.0/8"}, PersistentKeepalive: 25, AddressPoolID: pool.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateVPNProfile: %v", err)
+	}
+	uuid := "bind-device-" + label
+	issued, err := st.CreateEnrollment(ctx, EnrollmentCreate{Name: label, ProfileID: profile.ID, BoundDeviceUUID: uuid, TTL: 10 * time.Minute})
+	if err != nil {
+		t.Fatalf("CreateEnrollment: %v", err)
+	}
+	claim, err := st.ClaimManagedEnrollment(ctx, issued.Token, domain.EnrollmentClaim{
+		DeviceUUID: uuid, DeviceName: label, PublicKey: testWGKey(keyFill + 1),
+	})
+	if err != nil {
+		t.Fatalf("ClaimManagedEnrollment: %v", err)
+	}
+	return claim.Device
+}
+
+func enableDAVForTest(t *testing.T, st *Store, meta AuditMeta) {
+	t.Helper()
+	ctx := context.Background()
+	def, _ := st.GetServiceDefinition(ctx, "sunkardav")
+	if _, err := st.UpdateServiceDefinition(ctx, meta, "sunkardav", def.Revision, davInput(true)); err != nil {
+		t.Fatalf("enable sunkardav: %v", err)
+	}
+}
+
+func TestServiceAccessSnapshotCarriesPeerBinding(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, st *Store) {
+		ctx := context.Background()
+		meta := testActor(t, st)
+		device, _ := enrollActiveDevice(t, st)
+		enableDAVForTest(t, st, meta)
+		if _, err := st.SetServiceGrant(ctx, meta, "sunkardav", "device", device.ID, "allow"); err != nil {
+			t.Fatalf("grant: %v", err)
+		}
+
+		snap, err := st.ServiceAccessSnapshot(ctx)
+		if err != nil || len(snap.Targets) != 1 {
+			t.Fatalf("snapshot = %+v err=%v", snap, err)
+		}
+		target := snap.Targets[0]
+		cfg, err := st.ManagedConfigForDevice(ctx, device.ID)
+		if err != nil {
+			t.Fatalf("ManagedConfigForDevice: %v", err)
+		}
+		if target.DeviceID != device.ID || target.PeerID != cfg.PeerID || target.ConfigRevision != cfg.ConfigRevision {
+			t.Fatalf("binding %+v does not match device config %+v", target, cfg)
+		}
+		var key string
+		if err := st.db.QueryRowContext(ctx, st.q("SELECT public_key FROM wireguard_peers WHERE id = ?"), cfg.PeerID).Scan(&key); err != nil {
+			t.Fatalf("load key: %v", err)
+		}
+		if target.PublicKey != key || key == "" {
+			t.Fatalf("snapshot key %q, stored key %q", target.PublicKey, key)
+		}
+
+		// A key rotation changes the attested key immediately (and bumps
+		// the revision), so a gateway still seeing the old key denies it.
+		rotated, err := st.RotateDeviceWireGuardPublicKey(ctx, device.ID, testWGKey(77), cfg.ConfigRevision)
+		if err != nil {
+			t.Fatalf("rotate: %v", err)
+		}
+		snap, err = st.ServiceAccessSnapshot(ctx)
+		if err != nil || len(snap.Targets) != 1 {
+			t.Fatalf("snapshot after rotation = %+v err=%v", snap, err)
+		}
+		if snap.Targets[0].PublicKey != testWGKey(77) || snap.Targets[0].PublicKey == key ||
+			snap.Targets[0].ConfigRevision != rotated.ConfigRevision {
+			t.Fatalf("rotated binding = %+v (old key %q)", snap.Targets[0], key)
+		}
+	})
+}
+
+func TestServiceAccessSnapshotDeniesAmbiguousTunnelAddress(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, st *Store) {
+		ctx := context.Background()
+		meta := testActor(t, st)
+		// Two pools with the same CIDR hand out the same address.
+		first := enrollOnCIDR(t, st, "one", "10.211.0.0/29", "10.211.0.1", 10)
+		second := enrollOnCIDR(t, st, "two", "10.211.0.0/29", "10.211.0.1", 20)
+		enableDAVForTest(t, st, meta)
+		for _, dev := range []domain.Device{first, second} {
+			if _, err := st.SetServiceGrant(ctx, meta, "sunkardav", "device", dev.ID, "allow"); err != nil {
+				t.Fatalf("grant: %v", err)
+			}
+		}
+		snap, err := st.ServiceAccessSnapshot(ctx)
+		if err != nil {
+			t.Fatalf("snapshot: %v", err)
+		}
+		if len(snap.Targets) != 0 || snap.AddressConflicts != 2 {
+			t.Fatalf("ambiguous address was attributed: %+v", snap)
+		}
+	})
+}

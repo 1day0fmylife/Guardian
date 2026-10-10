@@ -160,7 +160,8 @@ Status:
 - [x] `services.read` / `services.manage` permissions; mutations audited in the same transaction.
 - [x] Admin API and the non-secret `GET /api/v1/device/services` effective-policy endpoint.
 - [x] Service gateway reference deployment (G-02): `deploy/service-gateway/`, `docs/service-gateway.md`; grants are projected to nftables sets by `guardian-gateway-acl`; acceptance test `scripts/verify.sh`.
-- [ ] Peer key/address binding and L7 identity policy (G-03), device refresh over the WebSocket wake channel (G-04), staged reconciliation SLOs (G-05), operator WebUI (G-06).
+- [x] Peer key/address ↔ device binding verified against the kernel peer table, anti-spoofing and L7 header/pinning policy (G-03), see `docs/service-gateway.md`.
+- [ ] Device refresh over the WebSocket wake channel (G-04), staged reconciliation SLOs (G-05), operator WebUI (G-06).
 
 ## Phase 4 — command and telemetry plane
 

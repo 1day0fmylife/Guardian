@@ -29,8 +29,9 @@ for vip in "$VIP_DNS" "$VIP_DAV" "$VIP_FLEET" "$VIP_ACS"; do
     ip address replace "$vip/32" dev lo
 done
 
-export WG_INTERFACE WG_PORT TUNNEL_CIDR VIP_DNS VIP_DAV VIP_FLEET VIP_ACS NFT_TABLE
-envsubst '${WG_INTERFACE} ${WG_PORT} ${TUNNEL_CIDR} ${VIP_DNS} ${VIP_DAV} ${VIP_FLEET} ${VIP_ACS} ${NFT_TABLE}' \
+WG_ADDRESS_HOST=${WG_ADDRESS%/*}
+export WG_INTERFACE WG_PORT TUNNEL_CIDR VIP_DNS VIP_DAV VIP_FLEET VIP_ACS NFT_TABLE WG_ADDRESS_HOST
+envsubst '${WG_INTERFACE} ${WG_PORT} ${TUNNEL_CIDR} ${VIP_DNS} ${VIP_DAV} ${VIP_FLEET} ${VIP_ACS} ${NFT_TABLE} ${WG_ADDRESS_HOST}' \
     < /etc/guardian-gateway/nftables.conf.tmpl > /run/guardian-gateway.nft
 nft -c -f /run/guardian-gateway.nft
 nft -f /run/guardian-gateway.nft

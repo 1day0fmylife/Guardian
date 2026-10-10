@@ -31,8 +31,14 @@ table inet ${NFT_TABLE} {
         # WireGuard transport from the public side.
         iifname != "${WG_INTERFACE}" udp dport ${WG_PORT} accept
 
-        # Everything from the tunnel must come from the tunnel address space.
+        # Everything from the tunnel must come from the tunnel address space,
+        # and no peer may present the gateway's own address as its source.
+        # (Per-peer source binding itself is WireGuard cryptokey routing:
+        # the kernel drops a packet whose source is outside the allowed-ips
+        # of the peer that authenticated it; guardian-gateway-acl only
+        # honors a grant for an address that is that peer's sole /32.)
         iifname "${WG_INTERFACE}" ip saddr != ${TUNNEL_CIDR} counter drop
+        iifname "${WG_INTERFACE}" ip saddr ${WG_ADDRESS_HOST} counter drop
 
         # DNS for the three service names, served on the DNS VIP only.
         iifname "${WG_INTERFACE}" ip daddr ${VIP_DNS} udp dport 53 accept
