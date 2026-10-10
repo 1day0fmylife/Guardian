@@ -135,7 +135,8 @@ repository's development stack.
   an empty (deny) ACL; the reconciler re-adds peers and `guardian-acl`
   repopulates the sets within `-resync`.
 * **Key rotation**: replacing `state/wg/private.key` changes the server public
-  key; update the VPN profile and let devices refresh their configuration.
+  key. In-place profile update is not implemented; use the coordinated new-profile
+  and re-enrollment procedure in `docs/operations-runbook.md`.
 
 ## Identity and trust boundaries (G-03)
 
@@ -223,3 +224,6 @@ Not implemented here and tracked separately:
 * Per-request device authentication at the gateway (e.g. signed identity
   assertions to backends) is intentionally absent; add it only for endpoints
   that need it and are reached through this gateway.
+
+Tenant/network constraints and migration 009: [tenant isolation](tenant-isolation.md).
+Backup, node failure, keys, certificates and decommission: [operations runbook](operations-runbook.md).

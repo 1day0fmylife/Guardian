@@ -19,6 +19,15 @@ type AddressPoolCreate struct {
 }
 
 func (s *Store) CreateAddressPool(ctx context.Context, input AddressPoolCreate) (domain.AddressPool, error) {
+	return s.createAddressPool(ctx, nil, input)
+}
+
+// CreateAddressPoolAudited validates global pool uniqueness and audits atomically.
+func (s *Store) CreateAddressPoolAudited(ctx context.Context, meta AuditMeta, input AddressPoolCreate) (domain.AddressPool, error) {
+	return s.createAddressPool(ctx, &meta, input)
+}
+
+func (s *Store) createAddressPool(ctx context.Context, meta *AuditMeta, input AddressPoolCreate) (domain.AddressPool, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.CIDR = strings.TrimSpace(input.CIDR)
 	input.Gateway = strings.TrimSpace(input.Gateway)
@@ -52,13 +61,38 @@ func (s *Store) CreateAddressPool(ctx context.Context, input AddressPoolCreate) 
 	if err != nil {
 		return domain.AddressPool{}, err
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.AddressPool{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, "UPDATE network_allocation_state SET revision = revision + 1 WHERE id = 1"); err != nil {
+		return domain.AddressPool{}, fmt.Errorf("lock pool allocation: %w", err)
+	}
+	prefixes, err := loadPoolPrefixes(ctx, tx)
+	if err != nil {
+		return domain.AddressPool{}, err
+	}
+	for _, existing := range prefixes {
+		if prefix.Overlaps(existing) {
+			return domain.AddressPool{}, catalogErr(ErrConflict, "address_pool_overlap", "tunnel address pools must not overlap")
+		}
+	}
 	now := nowText()
-	_, err = s.db.ExecContext(ctx, s.q(`
+	_, err = tx.ExecContext(ctx, s.q(`
 		INSERT INTO address_pools(id, name, cidr, gateway, dns_servers, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?)
 	`), id, input.Name, input.CIDR, input.Gateway, strings.Join(dns, ","), now, now)
 	if err != nil {
 		return domain.AddressPool{}, fmt.Errorf("create address pool: %w", err)
+	}
+	if meta != nil {
+		if err := s.appendAuditTx(ctx, tx, *meta, "address_pool.create", "address_pool", id, map[string]any{"cidr": input.CIDR}); err != nil {
+			return domain.AddressPool{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.AddressPool{}, err
 	}
 	return domain.AddressPool{
 		ID: id, Name: input.Name, CIDR: input.CIDR, Gateway: input.Gateway,
@@ -285,8 +319,8 @@ func (s *Store) allocateAddressTx(ctx context.Context, tx *sql.Tx, poolID, devic
 		var used int
 		err := tx.QueryRowContext(ctx, s.q(`
 			SELECT COUNT(*) FROM address_leases
-			WHERE pool_id = ? AND address = ? AND status IN ('active', 'revoking')
-		`), poolID, candidate.String()).Scan(&used)
+			WHERE address = ? AND status IN ('active', 'revoking')
+		`), candidate.String()).Scan(&used)
 		if err != nil {
 			return "", fmt.Errorf("check address lease: %w", err)
 		}

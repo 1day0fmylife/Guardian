@@ -118,6 +118,18 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 		return snap, nil
 	}
 
+	// Validate ownership in one bounded bulk query before exporting any targets.
+	var invalidOwners int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_scope_memberships m
+ LEFT JOIN device_scope_memberships t ON t.device_id = m.device_id AND t.scope_type = 'tenant'
+ LEFT JOIN scope_owners o ON o.scope_type = m.scope_type AND o.scope_id = m.scope_id
+ WHERE m.scope_type IN ('site', 'group') AND (o.scope_id IS NULL OR o.tenant_id <> COALESCE(t.scope_id, ''))`).Scan(&invalidOwners); err != nil {
+		return snap, fmt.Errorf("validate ACL scope owners: %w", err)
+	}
+	if invalidOwners != 0 {
+		return snap, scopeOwnerConflict()
+	}
+
 	scopes := map[string]*domain.DeviceScopes{}
 	mrows, err := tx.QueryContext(ctx, `SELECT device_id, scope_type, scope_id FROM device_scope_memberships ORDER BY device_id`)
 	if err != nil {

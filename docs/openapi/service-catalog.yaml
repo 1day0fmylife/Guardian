@@ -105,6 +105,7 @@ components:
         scope_id: { type: string, maxLength: 128 }
         effect: { type: string, enum: [allow, deny] }
     DeviceScopes:
+      description: Site/group IDs are globally unique and immutably owned by one tenant; empty tenant denotes the legacy standalone namespace, never a wildcard.
       type: object
       additionalProperties: false
       properties:
@@ -302,6 +303,7 @@ paths:
     put:
       tags: [Service catalog]
       summary: Replace device membership (services.manage)
+      description: First site/group assignment binds its tenant owner permanently. Cross-owner assignment returns 409 scope_tenant_conflict atomically. IDs stay reserved after memberships are removed.
       security: [{ adminSession: [] }]
       requestBody:
         required: true
@@ -311,6 +313,7 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
   /devices/{id}/services:
     parameters: [{ $ref: '#/components/parameters/DeviceId' }]
     get:

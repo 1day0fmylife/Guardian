@@ -39,7 +39,9 @@ A grant binds an `allow` or `deny` effect for one service to one scope:
 `tenant`, `site`, `group` or a single `device` (device row id). Device
 membership of tenant/site/groups is stored in `device_scope_memberships`
 (one tenant, one site, many groups) and edited with
-`PUT /api/v1/devices/{id}/scopes`.
+`PUT /api/v1/devices/{id}/scopes`. Site/group IDs have immutable tenant ownership
+from migration 009; see [tenant isolation](tenant-isolation.md) for compatibility
+and cross-owner rejection.
 
 Resolution is deterministic and deny-by-default:
 

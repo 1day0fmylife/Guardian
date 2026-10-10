@@ -58,6 +58,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 			}
 		}()
 
+		if version == 9 {
+			if err := s.validateIsolationUpgrade(ctx, tx); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+
 		for _, statement := range splitStatements(string(body)) {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				_ = tx.Rollback()

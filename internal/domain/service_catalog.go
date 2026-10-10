@@ -209,6 +209,9 @@ type ServiceGrant struct {
 }
 
 // DeviceScopes lists the tenant, site and groups a device belongs to.
+// Site/group IDs are global identifiers bound immutably to one tenant at first
+// assignment. Empty TenantID retains the legacy standalone namespace; it is not
+// a wildcard. Membership and ownership are enforced by the repository.
 type DeviceScopes struct {
 	TenantID string   `json:"tenant_id"`
 	SiteID   string   `json:"site_id"`

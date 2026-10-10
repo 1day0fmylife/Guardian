@@ -204,14 +204,17 @@ func (s *Store) SetDeviceSuspended(ctx context.Context, id string, suspended boo
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, s.q(`
-		UPDATE devices SET suspended = ?, status = ?, updated_at = ? WHERE id = ?
+		UPDATE devices SET suspended = ?, status = ?, updated_at = ? WHERE id = ? AND status IN ('active', 'suspended')
 	`), value, status, nowText(), id)
 	if err != nil {
 		return fmt.Errorf("update device suspension: %w", err)
 	}
 	n, err := result.RowsAffected()
 	if err == nil && n == 0 {
-		return ErrNotFound
+		if err := s.deviceExists(ctx, tx, id); err != nil {
+			return err
+		}
+		return ErrConflict
 	}
 	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
 		return err

@@ -315,14 +315,13 @@ func (s *Server) createAddressPool(w http.ResponseWriter, r *http.Request, princ
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	pool, err := s.store.CreateAddressPool(r.Context(), store.AddressPoolCreate{
+	pool, err := s.store.CreateAddressPoolAudited(r.Context(), auditMeta(r, principal), store.AddressPoolCreate{
 		Name: input.Name, CIDR: input.CIDR, Gateway: input.Gateway, DNSServers: input.DNSServers,
 	})
 	if err != nil {
-		writeStoreError(w, err)
+		writeCatalogError(w, err)
 		return
 	}
-	_ = s.audit(r, principal.UserID, "address_pool.create", "address_pool", pool.ID, map[string]any{"cidr": pool.CIDR})
 	writeJSON(w, http.StatusCreated, pool)
 }
 
