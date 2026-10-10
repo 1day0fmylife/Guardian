@@ -57,6 +57,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.ServiceACLRequired {
+		if err := st.RequireServiceACLAcknowledgement(startupCtx); err != nil {
+			logger.Error("enable service ACL revocation gate", "error", err)
+			os.Exit(1)
+		}
+	}
 	api := httpapi.New(st, cfg.PublicURL, cfg.SessionTTL)
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -82,6 +88,10 @@ func main() {
 				logger.Error("close WireGuard provider", "error", err)
 			}
 		}()
+		if err := st.RequeueWireGuardReconciliation(ctx); err != nil {
+			logger.Error("prepare WireGuard restart reconciliation", "error", err)
+			os.Exit(1)
+		}
 		reconciler := wireguard.NewReconciler(st, wgProvider, cfg.WireGuardReconcileBatchSize)
 		go wireguard.RunReconcileLoop(ctx, reconciler, cfg.WireGuardReconcileInterval, func(err error) {
 			logger.Error("WireGuard reconcile", "interface", cfg.WireGuardInterface, "error", err)

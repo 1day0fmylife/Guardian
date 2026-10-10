@@ -127,7 +127,7 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 		return domain.ManagedEnrollmentClaimResult{}, ErrConflict
 	}
 	var publicKeyExists int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE public_key = ?"), input.PublicKey).Scan(&publicKeyExists); err != nil {
+	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE public_key = ? OR previous_public_key = ?"), input.PublicKey, input.PublicKey).Scan(&publicKeyExists); err != nil {
 		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("check WireGuard public key: %w", err)
 	}
 	if publicKeyExists != 0 {

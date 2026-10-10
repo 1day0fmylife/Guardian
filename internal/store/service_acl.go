@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -28,9 +29,7 @@ type ServiceAccessTarget struct {
 	ServiceIDs      []string
 }
 
-// ServiceAccessSnapshot is a consistent-enough view of the service ACL: the
-// revision is read before the content, so the targets are never older than
-// the revision they are labelled with.
+// ServiceAccessSnapshot is a transactionally consistent view of the service ACL.
 type ServiceAccessSnapshot struct {
 	PolicyRevision int64
 	Targets        []ServiceAccessTarget
@@ -50,13 +49,18 @@ type ServiceAccessSnapshot struct {
 // that cannot be parsed are skipped (fail closed).
 func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapshot, error) {
 	var snap ServiceAccessSnapshot
-	revision, err := s.readServicePolicyRevision(ctx, s.db)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable, ReadOnly: true})
+	if err != nil {
+		return snap, fmt.Errorf("begin ACL snapshot: %w", err)
+	}
+	defer tx.Rollback()
+	revision, err := s.readServicePolicyRevision(ctx, tx)
 	if err != nil {
 		return snap, err
 	}
 	snap.PolicyRevision = revision
 
-	definitions, _, err := s.ListServiceDefinitions(ctx, ServiceDefinitionFilter{}, 1000, 0)
+	definitions, _, err := s.listServiceDefinitions(ctx, tx, ServiceDefinitionFilter{}, 1000, 0)
 	if err != nil {
 		return snap, err
 	}
@@ -66,7 +70,7 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 		address                     netip.Addr
 		configRevision, applied     int64
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT d.id, p.id, p.public_key, p.assigned_address, p.config_revision, p.applied_revision
 		FROM devices d
 		JOIN wireguard_peers p ON p.device_id = d.id
@@ -115,7 +119,7 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 	}
 
 	scopes := map[string]*domain.DeviceScopes{}
-	mrows, err := s.db.QueryContext(ctx, `SELECT device_id, scope_type, scope_id FROM device_scope_memberships ORDER BY device_id`)
+	mrows, err := tx.QueryContext(ctx, `SELECT device_id, scope_type, scope_id FROM device_scope_memberships ORDER BY device_id`)
 	if err != nil {
 		return snap, fmt.Errorf("list device scopes: %w", err)
 	}
@@ -146,7 +150,7 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 	mrows.Close()
 
 	var grants []domain.ServiceGrant
-	grows, err := s.db.QueryContext(ctx, "SELECT "+serviceGrantColumns+" FROM service_grants WHERE revoked_at IS NULL")
+	grows, err := tx.QueryContext(ctx, "SELECT "+serviceGrantColumns+" FROM service_grants WHERE revoked_at IS NULL")
 	if err != nil {
 		return snap, fmt.Errorf("list active grants: %w", err)
 	}

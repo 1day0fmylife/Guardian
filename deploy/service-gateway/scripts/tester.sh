@@ -26,7 +26,7 @@ admin-setup)
     boot=$(curl -sk -X POST "$API/api/v1/auth/bootstrap" -H 'Content-Type: application/json' \
         -d '{"username":"gwtest","display_name":"Gateway test","password":"gateway-test-password-0123456789"}')
     ADMIN_TOKEN=$(jq -r .token <<<"$boot")
-    [[ -n "$ADMIN_TOKEN" && "$ADMIN_TOKEN" != null ]] || { log "bootstrap failed: $boot"; exit 1; }
+    [[ -n "$ADMIN_TOKEN" && "$ADMIN_TOKEN" != null ]] || { log "bootstrap failed"; exit 1; }
     API_BASE=$API; API="$API_BASE"
 
     pool=$(api POST /api/v1/address-pools "$(jq -nc --arg c "$TUNNEL_CIDR" --arg g "${WG_ADDRESS%/*}" --arg d "$VIP_DNS" \
@@ -58,16 +58,39 @@ admin-setup)
             -H 'Content-Type: application/json' \
             -d "$(jq -nc --arg u "$uuid" --arg n "gw-$name" --arg k "$pub" '{device_uuid:$u,device_name:$n,public_key:$k}')")
         dev=$(jq -r .device.id <<<"$claim"); addr=$(jq -r .wireguard.assigned_address <<<"$claim")
-        [[ "$dev" != null && "$addr" != null ]] || { log "enrollment of $name failed: $claim"; exit 1; }
+        [[ "$dev" != null && "$addr" != null ]] || { log "enrollment of $name failed"; exit 1; }
         IFS=, read -ra svcs <<<"$granted"
         for svc in "${svcs[@]}"; do
             res=$(api POST "/api/v1/services/$svc/grants" "$(jq -nc --arg d "$dev" '{scope_type:"device",scope_id:$d,effect:"allow"}')")
             [[ $(jq -r .grant.effect <<<"$res") == allow ]] || { log "grant $svc->$name failed: $res"; exit 1; }
         done
-        clients=$(jq -c --arg n "$name" --arg d "$dev" --arg k "$priv" --arg a "$addr" --arg g "$granted" \
-            '. + [{name:$n,device_id:$d,private_key:$k,address:$a,granted:($g|split(","))}]' <<<"$clients")
+        clients=$(jq -c --arg n "$name" --arg d "$dev" --arg k "$priv" --arg a "$addr" --arg g "$granted" --arg t "$(jq -r .device_credential.token <<<"$claim")" \
+            '. + [{name:$n,device_id:$d,private_key:$k,address:$a,credential:$t,granted:($g|split(","))}]' <<<"$clients")
     done
     jq -nc --arg t "$ADMIN_TOKEN" --arg p "$profile_id" --argjson c "$clients" '{admin_token:$t,profile_id:$p,clients:$c}'
+    ;;
+
+device-rotate)
+    : "${ENROLL:?}" "${DEVICE_TOKEN:?}"
+    device_api() {
+        curl -s --cacert /pki/edge-ca.pem --max-time 15 -X "$1" \
+            -H "Authorization: Guardian-Device $DEVICE_TOKEN" -H 'Content-Type: application/json' \
+            "$ENROLL/api/v1/device/$2" "${@:3}"
+    }
+    cfg=$(device_api GET config)
+    revision=$(jq -r .config_revision <<<"$cfg")
+    [[ "$revision" =~ ^[0-9]+$ ]] || { log "device config failed"; exit 1; }
+    priv=$(wg genkey); pub=$(wg pubkey <<<"$priv")
+    body=$(jq -nc --arg k "$pub" --argjson r "$revision" '{public_key:$k,expected_revision:$r}')
+    rotated=$(device_api POST wireguard/rotate-key -d "$body")
+    [[ $(jq -r .wireguard.config_revision <<<"$rotated") == $((revision+1)) ]] || { log "device rotation failed"; exit 1; }
+    retry=$(device_api POST wireguard/rotate-key -d "$body")
+    [[ $(jq -r .wireguard.config_revision <<<"$retry") == $((revision+1)) ]] || { log "rotation idempotent retry failed"; exit 1; }
+    stale_key=$(wg genkey | wg pubkey)
+    stale=$(jq -nc --arg k "$stale_key" --argjson r "$revision" '{public_key:$k,expected_revision:$r}')
+    code=$(device_api POST wireguard/rotate-key -d "$stale" -o /tmp/stale-result -w '%{http_code}')
+    [[ "$code" == 409 ]] || { log "stale rotation was not rejected"; exit 1; }
+    jq -nc --arg k "$priv" '{private_key:$k}'
     ;;
 
 admin-enroll)
@@ -80,7 +103,7 @@ admin-enroll)
         -H 'Content-Type: application/json' \
         -d "$(jq -nc --arg u "$uuid" --arg n "gw-new" --arg k "$pub" '{device_uuid:$u,device_name:$n,public_key:$k}')")
     dev=$(jq -r .device.id <<<"$claim"); addr=$(jq -r .wireguard.assigned_address <<<"$claim")
-    [[ "$dev" != null ]] || { log "enroll failed: $claim"; exit 1; }
+    [[ "$dev" != null ]] || { log "enroll failed"; exit 1; }
     api POST "/api/v1/services/$GRANT_SERVICE/grants" "$(jq -nc --arg d "$dev" '{scope_type:"device",scope_id:$d,effect:"allow"}')" >/dev/null
     jq -nc --arg d "$dev" --arg k "$priv" --arg a "$addr" '{device_id:$d,private_key:$k,address:$a}'
     ;;
@@ -91,6 +114,11 @@ admin-regrant)
     [[ -n "$gid" && "$gid" != null ]] || { log "no grant to revoke"; exit 1; }
     api POST "/api/v1/services/$GRANT_SERVICE/grants" "$(jq -nc --arg d "$DEVICE_ID" '{scope_type:"device",scope_id:$d,effect:"allow"}')" >/dev/null
     api DELETE "/api/v1/services/$REVOKE_SERVICE/grants/$gid" | jq -c .grant.revoked_at
+    ;;
+
+admin-grant)
+    : "${API:?}" "${ADMIN_TOKEN:?}" "${DEVICE_ID:?}" "${GRANT_SERVICE:?}"
+    api POST "/api/v1/services/$GRANT_SERVICE/grants" "$(jq -nc --arg d "$DEVICE_ID" '{scope_type:"device",scope_id:$d,effect:"allow"}')" | jq -e '.grant.effect == "allow"' >/dev/null
     ;;
 
 admin-revoke)
@@ -122,7 +150,7 @@ public-probe)
     done
     ;;
 
-client|hammer)
+client|hammer|held-connection)
     : "${CLIENT_PRIVATE_KEY:?}" "${SERVER_PUBLIC_KEY:?}" "${ENDPOINT_HOST:?}" "${VIP_NET:?}" "${VIP_DNS:?}"
     : "${EXPECT_TUNNEL:=yes}"   # yes: handshake required, no: none may happen, any: ignore
     : "${EXPECT_ALLOWED:=}"     # comma separated FQDNs that must work
@@ -165,6 +193,36 @@ client|hammer)
             sleep 0.1
         done
         if [[ $failed == 0 && $total -gt 20 ]]; then pass "unchanged service never interrupted ($total requests)"; else bad "unchanged service interrupted: $failed/$total failed"; fi
+        exit $fail
+    fi
+
+    if [[ $mode == held-connection ]]; then
+        : "${HELD_FQDN:?}"
+        ip=$(vip_for "$HELD_FQDN")
+        mkfifo /tmp/held-input
+        openssl s_client -quiet -verify_return_error -CAfile /pki/ca.pem \
+            -connect "$ip:443" -servername "$HELD_FQDN" </tmp/held-input >/tmp/held-output 2>/dev/null &
+        tls_pid=$!
+        exec 3>/tmp/held-input
+        request() { printf 'GET / HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n' "$HELD_FQDN" >&3; }
+        responses() { grep -o -- '-ok' /tmp/held-output | wc -l; }
+        request
+        for _ in $(seq 1 15); do [[ $(responses) -gt 0 ]] && break; sleep 1; done
+        if [[ $(responses) == 0 ]]; then bad "held TLS connection never authorized"; kill "$tls_pid"; exit 1; fi
+        echo CONNECTION_READY
+        for _ in $(seq 1 30); do [[ -f /tmp/revocation-start ]] && break; sleep 1; done
+        [[ -f /tmp/revocation-start ]] || { bad "revocation was not triggered"; kill "$tls_pid"; exit 1; }
+        # One TLS socket stays open throughout; no reconnection can hide an
+        # established-flow bypass. After the 7s healthy SLO, no more replies.
+        trap '' PIPE
+        deadline=$(( $(stat -c %Y /tmp/revocation-start) + 7 ))
+        while (( $(date +%s) < deadline )); do request || true; sleep 0.5; done
+        before=$(responses)
+        for _ in $(seq 1 3); do request || true; sleep 1; done
+        after=$(responses)
+        [[ $before == "$after" ]] && pass "established TLS flow denied within 7s of revocation" || bad "established TLS flow survived revocation"
+        exec 3>&-
+        kill "$tls_pid" 2>/dev/null || true
         exit $fail
     fi
 

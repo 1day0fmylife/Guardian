@@ -116,3 +116,15 @@ func (s *Store) MarkWireGuardPeerReconcileError(ctx context.Context, peerID stri
 	}
 	return nil
 }
+
+// RequeueWireGuardReconciliation rebuilds kernel state from durable desired
+// state at reconciler startup. Completed revocations are never resurrected.
+func (s *Store) RequeueWireGuardReconciliation(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE wireguard_peers
+ SET applied_revision = 0, reconcile_state = 'pending', reconcile_error = ''
+ WHERE device_id IN (SELECT id FROM devices WHERE status <> 'revoked')`)
+	if err != nil {
+		return fmt.Errorf("requeue WireGuard reconciliation: %w", err)
+	}
+	return nil
+}

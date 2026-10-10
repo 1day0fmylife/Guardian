@@ -20,6 +20,11 @@ import (
 	"github.com/1day0fmylife/Guardian/internal/wireguard"
 )
 
+// MembershipTTL bounds access even if the controller crashes or nft becomes unavailable.
+const MembershipTTL = 30 * time.Second
+
+const passTimeout = 5 * time.Second
+
 var (
 	tableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,31}$`)
 	serviceIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -71,7 +76,7 @@ func Render(table string, serviceIDs []string, targets []store.ServiceAccessTarg
 			if i > 0 && addrs[i-1] == addr {
 				continue
 			}
-			elems = append(elems, addr.String())
+			elems = append(elems, addr.String()+" timeout 30s")
 		}
 		if len(elems) > 0 {
 			fmt.Fprintf(&b, "add element inet %s %s { %s }\n", table, set, strings.Join(elems, ", "))
@@ -110,6 +115,11 @@ type Source interface {
 	ServiceAccessSnapshot(ctx context.Context) (store.ServiceAccessSnapshot, error)
 }
 
+// PolicyAcknowledger durably confirms the revision after an atomic apply.
+type PolicyAcknowledger interface {
+	RecordServiceACLApplied(context.Context, int64) error
+}
+
 // Syncer keeps the gateway sets equal to Guardian's policy. It fails closed:
 // when the policy cannot be read or applied for longer than StaleTTL, all
 // service sets are flushed so that stale permissions do not outlive an outage
@@ -127,7 +137,7 @@ type Syncer struct {
 	Observer wireguard.PeerObserver
 	// ResyncInterval forces a re-apply of an unchanged policy so that sets
 	// are rebuilt after the gateway ruleset was reloaded or the host
-	// rebooted. Zero disables forced re-apply.
+	// rebooted. Lease renewal always occurs within MembershipTTL/3.
 	ResyncInterval time.Duration
 	Now            func() time.Time
 
@@ -164,11 +174,18 @@ func (s *Syncer) now() time.Time {
 func (s *Syncer) SyncOnce(ctx context.Context) (SyncResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, passTimeout)
+	defer cancel()
 
 	snap, err := s.Source.ServiceAccessSnapshot(ctx)
 	if err != nil {
 		return s.failClosed(ctx, fmt.Errorf("read policy: %w", err))
 	}
+	if snap.PolicyRevision <= 0 || snap.PolicyRevision < s.lastRev {
+		return s.denyAll(ctx, fmt.Errorf("stale policy revision"))
+	}
+	// Keep the high-water mark even when applying this revision fails.
+	s.lastRev = snap.PolicyRevision
 	targets := snap.Targets
 	var rejected []Rejection
 	var unexpected []string
@@ -188,13 +205,22 @@ func (s *Syncer) SyncOnce(ctx context.Context) (SyncResult, error) {
 		Rejected: rejected, UnexpectedPeers: len(unexpected), AddressConflicts: snap.AddressConflicts,
 	}
 	changed := script != s.lastApplied
-	if changed || (s.ResyncInterval > 0 && s.now().Sub(s.lastAppliedAt) >= s.ResyncInterval) {
+	renewAfter := MembershipTTL / 3
+	if s.ResyncInterval > 0 && s.ResyncInterval < renewAfter {
+		renewAfter = s.ResyncInterval
+	}
+	if changed || s.now().Sub(s.lastAppliedAt) >= renewAfter {
 		if err := s.Applier.Apply(ctx, script); err != nil {
 			return s.failClosed(ctx, err)
 		}
 		s.lastApplied = script
 		s.lastAppliedAt = s.now()
 		result.Changed = changed
+	}
+	if acknowledger, ok := s.Source.(PolicyAcknowledger); ok {
+		if err := acknowledger.RecordServiceACLApplied(ctx, snap.PolicyRevision); err != nil {
+			return s.failClosed(ctx, err)
+		}
 	}
 	s.lastSuccess = s.now()
 	s.lastRev = snap.PolicyRevision
@@ -205,18 +231,20 @@ func (s *Syncer) failClosed(ctx context.Context, cause error) (SyncResult, error
 	if !s.lastSuccess.IsZero() && s.now().Sub(s.lastSuccess) < s.StaleTTL {
 		return SyncResult{PolicyRevision: s.lastRev}, cause
 	}
+	return s.denyAll(ctx, cause)
+}
+
+func (s *Syncer) denyAll(ctx context.Context, cause error) (SyncResult, error) {
 	// Never synced successfully or stale for too long: deny everything.
 	empty, err := Render(s.Table, s.ServiceIDs, nil)
 	if err != nil {
-		return SyncResult{FailedClosed: true}, fmt.Errorf("%v; render empty policy: %w", cause, err)
+		return SyncResult{}, fmt.Errorf("%v; render empty policy: %w", cause, err)
 	}
-	if empty != s.lastApplied {
-		if err := s.Applier.Apply(ctx, empty); err != nil {
-			return SyncResult{FailedClosed: true}, fmt.Errorf("%v; flush sets: %w", cause, err)
-		}
-		s.lastApplied = empty
-		s.lastAppliedAt = s.now()
+	if err := s.Applier.Apply(ctx, empty); err != nil {
+		return SyncResult{}, fmt.Errorf("%v; flush sets: %w", cause, err)
 	}
+	s.lastApplied = empty
+	s.lastAppliedAt = s.now()
 	return SyncResult{FailedClosed: true}, cause
 }
 

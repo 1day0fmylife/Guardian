@@ -13,19 +13,26 @@ delete table inet ${NFT_TABLE}
 table inet ${NFT_TABLE} {
     set svc_sunkardav_v4 {
         type ipv4_addr
+        flags timeout
+        timeout 30s
     }
     set svc_admiral_device_v4 {
         type ipv4_addr
+        flags timeout
+        timeout 30s
     }
     set svc_sunkarcwmp_acs_v4 {
         type ipv4_addr
+        flags timeout
+        timeout 30s
     }
 
     chain input {
         type filter hook input priority filter; policy drop;
 
         ct state invalid drop
-        ct state established,related accept
+        # Tunnel packets must recheck service grants even on established flows.
+        iifname != "${WG_INTERFACE}" ct state established,related accept
         iifname "lo" accept
 
         # WireGuard transport from the public side.

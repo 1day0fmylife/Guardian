@@ -2,6 +2,7 @@
 Description=Guardian service gateway TLS proxy (tunnel-side VIPs only)
 After=guardian-gateway-network.service
 Requires=guardian-gateway-network.service
+PartOf=guardian-gateway-network.service
 
 [Service]
 User=caddy

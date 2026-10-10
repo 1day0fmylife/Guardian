@@ -1,6 +1,6 @@
 // guardian-gateway-acl projects Guardian's service policy onto the nftables
 // sets of the service gateway. It needs read access to the Guardian database
-// and CAP_NET_ADMIN in the gateway network namespace, and nothing else.
+// (plus UPDATE on service_acl_state) and CAP_NET_ADMIN in the gateway network namespace, and nothing else.
 package main
 
 import (
@@ -24,13 +24,21 @@ func main() {
 		table    = flag.String("table", "guardian_gw", "nftables inet table that declares the service sets")
 		interval = flag.Duration("interval", 2*time.Second, "reconcile interval")
 		staleTTL = flag.Duration("stale-ttl", 30*time.Second, "flush all sets when policy cannot be refreshed for this long")
-		resync   = flag.Duration("resync", 30*time.Second, "re-apply an unchanged policy this often (recovers from ruleset reloads)")
+		resync   = flag.Duration("resync", 10*time.Second, "re-apply an unchanged policy this often (recovers from ruleset reloads)")
 		once     = flag.Bool("once", false, "synchronize once and exit")
 		dryRun   = flag.Bool("dry-run", false, "print the nft script instead of applying it")
 		iface    = flag.String("interface", "wg0", "WireGuard interface whose peer table is verified against Guardian's bindings")
 		noVerify = flag.Bool("skip-peer-verification", false, "UNSAFE: trust the database without checking the kernel peer table (dry runs only)")
 	)
 	flag.Parse()
+	if *interval <= 0 || *interval > 5*time.Second || *staleTTL <= 0 || *staleTTL > gatewayacl.MembershipTTL || *resync <= 0 || *resync > gatewayacl.MembershipTTL/3 {
+		fmt.Fprintln(os.Stderr, "interval must be in (0,5s], stale-ttl in (0,30s], resync in (0,10s]")
+		os.Exit(2)
+	}
+	if *noVerify && !*dryRun {
+		fmt.Fprintln(os.Stderr, "skip-peer-verification requires dry-run")
+		os.Exit(2)
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	dbURL := os.Getenv("GUARDIAN_DATABASE_URL")
@@ -54,8 +62,12 @@ func main() {
 	if *dryRun {
 		applier = printApplier{}
 	}
+	var source gatewayacl.Source = st
+	if *dryRun {
+		source = readOnlySource{Source: st}
+	}
 	syncer := &gatewayacl.Syncer{
-		Source: st, Applier: applier, Table: *table,
+		Source: source, Applier: applier, Table: *table,
 		ServiceIDs: domain.KnownServiceIDs(), StaleTTL: *staleTTL, ResyncInterval: *resync,
 	}
 	if !*noVerify {
@@ -132,3 +144,6 @@ func logRejections(logger *slog.Logger, res gatewayacl.SyncResult) {
 		logger.Warn("peers denied: tunnel address claimed by more than one active peer", "count", res.AddressConflicts)
 	}
 }
+
+// A dry run must never acknowledge a script it only printed.
+type readOnlySource struct{ gatewayacl.Source }
