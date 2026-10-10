@@ -35,7 +35,11 @@ issue() { # name, comma-separated DNS SANs
 }
 
 issue gateway "$fqdns"
-[[ -n "$stubs" ]] && issue stub "$stubs"
+if [[ -n "$stubs" ]]; then
+    issue stub "$stubs"
+    # Same names, same CA, different key: only a leaf pin can tell them apart.
+    issue rogue "$stubs,rogue"
+fi
 [[ -f "$pki/upstream-ca.pem" ]] || cp "$pki/ca.pem" "$pki/upstream-ca.pem"
 
 # Containers drop DAC_OVERRIDE, so files must be world-readable inside the

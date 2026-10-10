@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/1day0fmylife/Guardian/internal/store"
+	"github.com/1day0fmylife/Guardian/internal/wireguard"
 )
 
 var (
@@ -119,6 +120,11 @@ type Syncer struct {
 	Table      string
 	ServiceIDs []string
 	StaleTTL   time.Duration
+	// Observer, when set, supplies the live WireGuard peer table. Targets
+	// whose Guardian binding is not what the kernel enforces are dropped
+	// (see VerifyBindings). Leaving it nil disables verification and must
+	// only be done for dry runs.
+	Observer wireguard.PeerObserver
 	// ResyncInterval forces a re-apply of an unchanged policy so that sets
 	// are rebuilt after the gateway ruleset was reloaded or the host
 	// rebooted. Zero disables forced re-apply.
@@ -138,6 +144,13 @@ type SyncResult struct {
 	Targets        int
 	Changed        bool
 	FailedClosed   bool
+	// Rejected lists devices whose grant was withheld because the kernel
+	// peer state did not match Guardian's binding, and UnexpectedPeers the
+	// kernel peers Guardian does not know. AddressConflicts counts peers
+	// denied because their tunnel address is not unique.
+	Rejected         []Rejection
+	UnexpectedPeers  int
+	AddressConflicts int
 }
 
 func (s *Syncer) now() time.Time {
@@ -156,11 +169,24 @@ func (s *Syncer) SyncOnce(ctx context.Context) (SyncResult, error) {
 	if err != nil {
 		return s.failClosed(ctx, fmt.Errorf("read policy: %w", err))
 	}
-	script, err := Render(s.Table, s.ServiceIDs, snap.Targets)
+	targets := snap.Targets
+	var rejected []Rejection
+	var unexpected []string
+	if s.Observer != nil {
+		observed, err := s.Observer.ObservePeers(ctx)
+		if err != nil {
+			return s.failClosed(ctx, fmt.Errorf("observe peers: %w", err))
+		}
+		targets, rejected, unexpected = VerifyBindings(targets, observed)
+	}
+	script, err := Render(s.Table, s.ServiceIDs, targets)
 	if err != nil {
 		return s.failClosed(ctx, err)
 	}
-	result := SyncResult{PolicyRevision: snap.PolicyRevision, Targets: len(snap.Targets)}
+	result := SyncResult{
+		PolicyRevision: snap.PolicyRevision, Targets: len(targets),
+		Rejected: rejected, UnexpectedPeers: len(unexpected), AddressConflicts: snap.AddressConflicts,
+	}
 	changed := script != s.lastApplied
 	if changed || (s.ResyncInterval > 0 && s.now().Sub(s.lastAppliedAt) >= s.ResyncInterval) {
 		if err := s.Applier.Apply(ctx, script); err != nil {

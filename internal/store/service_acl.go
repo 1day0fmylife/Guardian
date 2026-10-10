@@ -12,10 +12,20 @@ import (
 
 // ServiceAccessTarget is one provisioned WireGuard peer address together with
 // the services its device is currently allowed to reach.
+//
+// DeviceID, PeerID, PublicKey, Address and ConfigRevision together are the
+// binding Guardian attests for the peer: the immutable device id owns exactly
+// this WireGuard key and tunnel address at this configuration revision. The
+// gateway must only honor the grant for traffic that the kernel can attribute
+// to that same key and address (see gatewayacl.VerifyBindings).
 type ServiceAccessTarget struct {
-	DeviceID   string
-	Address    netip.Addr
-	ServiceIDs []string
+	DeviceID        string
+	PeerID          string
+	PublicKey       string
+	Address         netip.Addr
+	ConfigRevision  int64
+	AppliedRevision int64
+	ServiceIDs      []string
 }
 
 // ServiceAccessSnapshot is a consistent-enough view of the service ACL: the
@@ -24,6 +34,9 @@ type ServiceAccessTarget struct {
 type ServiceAccessSnapshot struct {
 	PolicyRevision int64
 	Targets        []ServiceAccessTarget
+	// AddressConflicts counts active peers excluded because another active
+	// peer claims the same tunnel address. Both are denied (fail closed).
+	AddressConflicts int
 }
 
 // ServiceAccessSnapshot resolves the service policy of every active,
@@ -49,11 +62,12 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 	}
 
 	type peer struct {
-		deviceID string
-		address  netip.Addr
+		deviceID, peerID, publicKey string
+		address                     netip.Addr
+		configRevision, applied     int64
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.id, p.assigned_address
+		SELECT d.id, p.id, p.public_key, p.assigned_address, p.config_revision, p.applied_revision
 		FROM devices d
 		JOIN wireguard_peers p ON p.device_id = d.id
 		WHERE d.status = 'active' AND d.suspended = 0
@@ -64,13 +78,15 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 	}
 	var peers []peer
 	for rows.Next() {
-		var deviceID, raw string
-		if err := rows.Scan(&deviceID, &raw); err != nil {
+		var p peer
+		var raw string
+		if err := rows.Scan(&p.deviceID, &p.peerID, &p.publicKey, &raw, &p.configRevision, &p.applied); err != nil {
 			rows.Close()
 			return snap, fmt.Errorf("scan provisioned peer: %w", err)
 		}
 		if addr, ok := parsePeerAddress(raw); ok {
-			peers = append(peers, peer{deviceID: deviceID, address: addr})
+			p.address = addr
+			peers = append(peers, p)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -78,6 +94,22 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 		return snap, err
 	}
 	rows.Close()
+
+	// Two active peers must never share a tunnel address. If they do (for
+	// example overlapping pools), neither is attributed: ambiguity is denial.
+	owners := map[netip.Addr]int{}
+	for _, p := range peers {
+		owners[p.address]++
+	}
+	unique := peers[:0]
+	for _, p := range peers {
+		if owners[p.address] > 1 {
+			snap.AddressConflicts++
+			continue
+		}
+		unique = append(unique, p)
+	}
+	peers = unique
 	if len(peers) == 0 {
 		return snap, nil
 	}
@@ -147,7 +179,10 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 			continue
 		}
 		sort.Strings(allowed)
-		snap.Targets = append(snap.Targets, ServiceAccessTarget{DeviceID: p.deviceID, Address: p.address, ServiceIDs: allowed})
+		snap.Targets = append(snap.Targets, ServiceAccessTarget{
+			DeviceID: p.deviceID, PeerID: p.peerID, PublicKey: p.publicKey, Address: p.address,
+			ConfigRevision: p.configRevision, AppliedRevision: p.applied, ServiceIDs: allowed,
+		})
 	}
 	return snap, nil
 }

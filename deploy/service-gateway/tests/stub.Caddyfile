@@ -4,6 +4,13 @@
 }
 
 https://:8443 {
-	tls /pki/stub.crt /pki/stub.key
-	respond "{$STUB_NAME}-ok" 200
+	tls /pki/{$STUB_CERT:stub}.crt /pki/{$STUB_CERT:stub}.key
+
+	# Echo what the gateway actually forwarded, for header-trust tests.
+	handle /headers {
+		respond "xff={http.request.header.X-Forwarded-For};proto={http.request.header.X-Forwarded-Proto};real={http.request.header.X-Real-IP};fwd={http.request.header.Forwarded};dev={http.request.header.X-Guardian-Device-Id};guardian={http.request.header.X-Guardian-Peer};user={http.request.header.X-Remote-User};tcip={http.request.header.True-Client-IP};host={http.request.header.X-Forwarded-Host};auth={http.request.header.Authorization}" 200
+	}
+	handle {
+		respond "{$STUB_NAME}-ok" 200
+	}
 }

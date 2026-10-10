@@ -1,6 +1,19 @@
 # Service gateway proxy. Runs inside the WireGuard gateway network namespace
-# and binds ONLY to the per-service VIPs on the tunnel side. TLS uses the
-# private CA from scripts/gen-pki.sh (or your own certificate files).
+# and binds ONLY to the per-service VIPs on the tunnel side.
+#
+# Trust model (G-03):
+#  * The only thing the gateway asserts to a backend is the peer's tunnel
+#    address in X-Forwarded-For, SET (never appended) from the transport peer.
+#    The address is attributable because WireGuard cryptokey routing and the
+#    gateway ACL bind it to one authenticated key (see docs/service-gateway.md).
+#  * Every other client-supplied forwarding/identity header is removed, so a
+#    peer can neither spoof its address nor claim a Guardian device identity
+#    or a proxy-authenticated user.
+#  * The client's own Authorization (DAV user, ACS digest, Admiral device
+#    credential) passes through untouched: backends keep authenticating
+#    their own principals.
+#  * Upstream TLS is verified against a per-service trust file (use the
+#    backend's leaf or private CA, i.e. a pin) and a fixed server name.
 {
 	auto_https off
 	admin off
@@ -12,48 +25,49 @@ http://127.0.0.1:8081 {
 	respond /healthz "ok" 200
 }
 
-(upstream_tls) {
-	transport http {
-		tls_trust_pool file /pki/upstream-ca.pem
+# args: upstream URL, trust file (pin), expected TLS server name
+(guarded_upstream) {
+	reverse_proxy {args[0]} {
+		transport http {
+			tls_trust_pool file {args[1]}
+			tls_server_name {args[2]}
+		}
+		header_up -Forwarded
+		header_up -X-Forwarded-Host
+		header_up -X-Forwarded-Port
+		header_up -X-Forwarded-Server
+		header_up -X-Original-Forwarded-For
+		header_up -X-Real-IP
+		header_up -True-Client-IP
+		header_up -CF-Connecting-IP
+		header_up -X-Client-IP
+		header_up -X-Cluster-Client-IP
+		header_up -Via
+		header_up -X-Remote-User
+		header_up -Remote-User
+		header_up -X-Forwarded-User
+		header_up -X-Authenticated-User
+		header_up -X-Auth-Request-User
+		header_up -X-Guardian-*
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
 	}
 }
 
 https://{$DAV_FQDN} {
 	bind {$VIP_DAV}
 	tls /pki/gateway.crt /pki/gateway.key
-	reverse_proxy {$UPSTREAM_DAV} {
-		import upstream_tls
-		# Client-supplied forwarding headers are not identity.
-		header_up -X-Forwarded-For
-		header_up -X-Forwarded-Host
-		header_up -X-Forwarded-Proto
-		header_up -Forwarded
-		header_up -X-Real-IP
-	}
+	import guarded_upstream {$UPSTREAM_DAV} {$UPSTREAM_DAV_TRUST:/pki/upstream-ca.pem} {$UPSTREAM_DAV_SNI}
 }
 
 https://{$FLEET_FQDN} {
 	bind {$VIP_FLEET}
 	tls /pki/gateway.crt /pki/gateway.key
-	reverse_proxy {$UPSTREAM_FLEET} {
-		import upstream_tls
-		header_up -X-Forwarded-For
-		header_up -X-Forwarded-Host
-		header_up -X-Forwarded-Proto
-		header_up -Forwarded
-		header_up -X-Real-IP
-	}
+	import guarded_upstream {$UPSTREAM_FLEET} {$UPSTREAM_FLEET_TRUST:/pki/upstream-ca.pem} {$UPSTREAM_FLEET_SNI}
 }
 
 https://{$ACS_FQDN} {
 	bind {$VIP_ACS}
 	tls /pki/gateway.crt /pki/gateway.key
-	reverse_proxy {$UPSTREAM_ACS} {
-		import upstream_tls
-		header_up -X-Forwarded-For
-		header_up -X-Forwarded-Host
-		header_up -X-Forwarded-Proto
-		header_up -Forwarded
-		header_up -X-Real-IP
-	}
+	import guarded_upstream {$UPSTREAM_ACS} {$UPSTREAM_ACS_TRUST:/pki/upstream-ca.pem} {$UPSTREAM_ACS_SNI}
 }

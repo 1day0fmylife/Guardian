@@ -86,3 +86,29 @@ func TestPeerAllowedIPNormalizesToIPv4HostRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestWGCtrlProviderObservePeersReportsKeysAndAllowedIPs(t *testing.T) {
+	var key1, key2 wgtypes.Key
+	key1[0], key2[0] = 1, 2
+	_, v4, _ := net.ParseCIDR("10.88.0.20/32")
+	_, wide, _ := net.ParseCIDR("10.88.0.0/24")
+	client := &fakeWGControlClient{device: &wgtypes.Device{Name: "wg0", Peers: []wgtypes.Peer{
+		{PublicKey: key1, AllowedIPs: []net.IPNet{*v4}},
+		{PublicKey: key2, AllowedIPs: []net.IPNet{*wide}},
+	}}}
+	provider := newWGCtrlProviderWithClient("wg0", client)
+
+	peers, err := provider.ObservePeers(context.Background())
+	if err != nil {
+		t.Fatalf("ObservePeers: %v", err)
+	}
+	if len(peers) != 2 {
+		t.Fatalf("peers = %+v", peers)
+	}
+	if peers[0].PublicKey != key1.String() || len(peers[0].AllowedIPs) != 1 || peers[0].AllowedIPs[0].String() != "10.88.0.20/32" {
+		t.Fatalf("peer 0 = %+v", peers[0])
+	}
+	if peers[1].AllowedIPs[0].String() != "10.88.0.0/24" {
+		t.Fatalf("peer 1 = %+v", peers[1])
+	}
+}

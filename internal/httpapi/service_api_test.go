@@ -592,3 +592,82 @@ func TestExistingEndpointsRemainCompatible(t *testing.T) {
 		t.Fatalf("permissions = %v", perms.Items)
 	}
 }
+
+func TestForgedForwardingAndIdentityHeadersAreNotIdentity(t *testing.T) {
+	h := newAPIHarness(t)
+	deviceA, tokenA := h.enrollDevice()
+	deviceB, _ := h.enrollDevice()
+	h.enableService("sunkardav")
+	h.grant("sunkardav", "device", deviceB.ID, "allow", http.StatusCreated)
+
+	forged := map[string]string{
+		"X-Forwarded-For":          "203.0.113.77",
+		"X-Real-IP":                "203.0.113.77",
+		"Forwarded":                "for=203.0.113.77",
+		"True-Client-IP":           "203.0.113.77",
+		"X-Guardian-Device-Id":     deviceB.ID,
+		"X-Guardian-Device-Uuid":   deviceB.DeviceUUID,
+		"X-Remote-User":            "root",
+		"X-Authenticated-User":     "root",
+		"X-Forwarded-User":         "root",
+		"X-Original-Forwarded-For": "203.0.113.77",
+	}
+	do := func(method, path, scheme, token string, body any) (int, []byte) {
+		var reader *bytes.Reader
+		if body != nil {
+			raw, _ := json.Marshal(body)
+			reader = bytes.NewReader(raw)
+		} else {
+			reader = bytes.NewReader(nil)
+		}
+		req := httptest.NewRequest(method, path, reader)
+		req.RemoteAddr = "192.0.2.50:4000"
+		for k, v := range forged {
+			req.Header.Set(k, v)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", scheme+" "+token)
+		}
+		rec := httptest.NewRecorder()
+		h.handler.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.Bytes()
+	}
+
+	// Headers alone never authenticate anything.
+	if status, _ := do(http.MethodGet, "/api/v1/device/services", "", "", nil); status != http.StatusUnauthorized {
+		t.Fatalf("device endpoint without credential = %d, want 401", status)
+	}
+	if status, _ := do(http.MethodGet, "/api/v1/services", "", "", nil); status != http.StatusUnauthorized {
+		t.Fatalf("admin endpoint without session = %d, want 401", status)
+	}
+
+	// With device A's credential, forged headers naming device B change
+	// nothing: the answer is A's (empty) policy, never B's grant.
+	status, raw := do(http.MethodGet, "/api/v1/device/services", "Guardian-Device", tokenA, nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+	var policy policyResponse
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if policy.DeviceID != deviceA.ID || len(policy.Services) != 0 {
+		t.Fatalf("forged identity headers influenced policy: %+v", policy)
+	}
+
+	// The audit source address is the transport peer, not a header.
+	status, _ = do(http.MethodPost, "/api/v1/services/sunkardav/grants", "Bearer", h.admin,
+		map[string]any{"scope_type": "tenant", "scope_id": "acme", "effect": "allow"})
+	if status != http.StatusCreated {
+		t.Fatalf("grant status = %d", status)
+	}
+	var audit struct {
+		Items []domain.AuditEvent `json:"items"`
+	}
+	h.mustDo(http.MethodGet, "/api/v1/audit?limit=20", "", h.admin, nil, http.StatusOK, &audit)
+	for _, event := range audit.Items {
+		if strings.Contains(event.SourceIP, "203.0.113") {
+			t.Fatalf("audit trusted a forwarding header: %+v", event)
+		}
+	}
+}

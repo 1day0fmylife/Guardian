@@ -16,6 +16,7 @@ import (
 	"github.com/1day0fmylife/Guardian/internal/domain"
 	"github.com/1day0fmylife/Guardian/internal/gatewayacl"
 	"github.com/1day0fmylife/Guardian/internal/store"
+	"github.com/1day0fmylife/Guardian/internal/wireguard"
 )
 
 func main() {
@@ -26,6 +27,8 @@ func main() {
 		resync   = flag.Duration("resync", 30*time.Second, "re-apply an unchanged policy this often (recovers from ruleset reloads)")
 		once     = flag.Bool("once", false, "synchronize once and exit")
 		dryRun   = flag.Bool("dry-run", false, "print the nft script instead of applying it")
+		iface    = flag.String("interface", "wg0", "WireGuard interface whose peer table is verified against Guardian's bindings")
+		noVerify = flag.Bool("skip-peer-verification", false, "UNSAFE: trust the database without checking the kernel peer table (dry runs only)")
 	)
 	flag.Parse()
 
@@ -55,6 +58,17 @@ func main() {
 		Source: st, Applier: applier, Table: *table,
 		ServiceIDs: domain.KnownServiceIDs(), StaleTTL: *staleTTL, ResyncInterval: *resync,
 	}
+	if !*noVerify {
+		provider, err := wireguard.NewWGCtrlProvider(*iface)
+		if err != nil {
+			logger.Error("open WireGuard interface for peer verification", "interface", *iface, "error", err)
+			os.Exit(1)
+		}
+		defer provider.Close()
+		syncer.Observer = provider
+	} else {
+		logger.Warn("peer verification disabled: grants are not checked against the kernel peer table")
+	}
 
 	if *once {
 		res, err := syncer.SyncOnce(ctx)
@@ -62,12 +76,17 @@ func main() {
 			logger.Error("sync", "error", err, "failed_closed", res.FailedClosed)
 			os.Exit(1)
 		}
+		logRejections(logger, res)
 		logger.Info("synced", "policy_revision", res.PolicyRevision, "targets", res.Targets, "changed", res.Changed)
 		return
 	}
 
-	var lastErr string
+	var lastErr, lastRejections string
 	syncer.Run(ctx, *interval, func(res gatewayacl.SyncResult, err error) {
+		if key := rejectionKey(res); key != lastRejections {
+			lastRejections = key
+			logRejections(logger, res)
+		}
 		switch {
 		case err != nil:
 			if msg := err.Error(); msg != lastErr {
@@ -88,4 +107,28 @@ type printApplier struct{}
 func (printApplier) Apply(_ context.Context, script string) error {
 	fmt.Print(script)
 	return nil
+}
+
+// rejectionKey summarizes the binding mismatches of one pass so that a
+// persistent mismatch is logged once, not every interval.
+func rejectionKey(res gatewayacl.SyncResult) string {
+	key := fmt.Sprintf("%d/%d", res.UnexpectedPeers, res.AddressConflicts)
+	for _, r := range res.Rejected {
+		key += "|" + r.DeviceID + ":" + r.Reason
+	}
+	return key
+}
+
+// logRejections reports withheld grants. It logs device ids and reasons only:
+// no keys, addresses or credentials.
+func logRejections(logger *slog.Logger, res gatewayacl.SyncResult) {
+	for _, r := range res.Rejected {
+		logger.Warn("grant withheld: kernel peer does not match Guardian binding", "device_id", r.DeviceID, "reason", r.Reason)
+	}
+	if res.UnexpectedPeers > 0 {
+		logger.Warn("kernel peers unknown to Guardian have no service access", "count", res.UnexpectedPeers)
+	}
+	if res.AddressConflicts > 0 {
+		logger.Warn("peers denied: tunnel address claimed by more than one active peer", "count", res.AddressConflicts)
+	}
 }

@@ -135,17 +135,90 @@ repository's development stack.
 * **Key rotation**: replacing `state/wg/private.key` changes the server public
   key; update the VPN profile and let devices refresh their configuration.
 
+## Identity and trust boundaries (G-03)
+
+**What identifies a device at the gateway.** The WireGuard peer, i.e. its
+public key, authenticated by the Noise handshake. The tunnel source address
+is only a *derived* identity, and only because WireGuard drops any packet
+whose source is outside the allowed-ips of the peer that authenticated it.
+Guardian attests one binding per active device:
+
+```
+device id (immutable) <-> WireGuard public key <-> one tunnel /32 <-> config revision
+```
+
+`guardian-gateway-acl` honors a grant for an address **only** when the live
+kernel peer table (`wgctrl`) agrees with that binding:
+
+| Kernel state | Result |
+| --- | --- |
+| peer with the attested key, allowed-ips exactly the attested `/32`, no other peer routes it | grant applied |
+| attested key absent (removed peer, disconnected, not yet reconciled, rotated away) | denied: `peer_not_in_interface` |
+| key present but allowed-ips differ (other address, extra prefixes, a whole subnet, none) | denied: `allowed_ips_mismatch` |
+| another peer also routes that address | denied: `address_claimed_by_other_peer` |
+| two active Guardian peers claim the same address (e.g. overlapping pools) | both denied (`AddressConflicts`) |
+| key unknown to Guardian | never receives a grant (reported as unexpected) |
+
+Consequences:
+
+* **Forged source address** – a peer cannot present another peer's address:
+  the kernel drops it. The gateway also drops tunnel packets sourced from the
+  gateway's own address and anything outside `TUNNEL_CIDR`.
+* **Reused address** – when Guardian re-leases an address, the old key holder
+  does not inherit the new device's grants (the kernel still maps the address
+  to the old key, so the binding does not verify), and the new device is
+  honored only once its own peer owns the address.
+* **Key rotation** – the attested key changes with the revision immediately;
+  until the reconciler swaps the kernel peer the device is denied service
+  access (fail closed, one reconcile interval).
+* **Removed peer** – access disappears when the peer leaves the interface,
+  even if the database still lists the device as active.
+* **Lateral movement** – nothing is forwarded; allowed-ips wider than a
+  single host route disable the peer's grants.
+* If the kernel peer table cannot be read, the ACL behaves like a policy
+  outage: last verified state for at most `-stale-ttl`, then deny.
+
+**What the gateway tells backends (L7).** TLS is terminated at the gateway
+(per-service VIP, private CA). Toward DAV/ACS/Admiral:
+
+* `X-Forwarded-For` is **set** (not appended) to the peer's tunnel address,
+  taken from the transport connection. It may be used by a backend as
+  "WireGuard-authenticated source" and mapped back to a device through
+  Guardian; it is not a user or device credential.
+* `X-Forwarded-Proto: https` is set. Everything else a client can send that
+  looks like identity or forwarding is removed: `Forwarded`,
+  `X-Forwarded-Host/Port/Server`, `X-Original-Forwarded-For`, `X-Real-IP`,
+  `True-Client-IP`, `CF-Connecting-IP`, `X-Client-IP`, `Via`,
+  `X-Remote-User`, `Remote-User`, `X-Forwarded-User`,
+  `X-Authenticated-User`, `X-Auth-Request-User` and `X-Guardian-*`.
+* `Authorization` is passed through unchanged: SunkarDAV users, ACS per-device
+  Digest credentials and Admiral device credentials keep being authenticated
+  by their owners. The gateway adds **no** per-request device authentication
+  of its own; headers received from a client are never identity.
+* Guardian's own API ignores every forwarding header: the audit source is the
+  transport peer and device identity comes only from the
+  `Guardian-Device` credential.
+* Upstream TLS is verified per service against a trust file
+  (`UPSTREAM_*_TRUST`, a CA bundle or the backend's leaf certificate, i.e. a
+  pin) and a fixed server name (`UPSTREAM_*_SNI`). A certificate that the
+  same CA signed but that is not the pinned leaf is rejected (HTTP 502).
+
+**Scope changes** are applied by replacing the contents of all service sets
+in a single `nft -f -` transaction; an unchanged service of an unchanged
+device is never interrupted. **Logging**: the ACL logs device ids, reasons
+and counts only; keys, addresses, tokens and database URLs are not logged.
+
 ## Scope boundaries
 
 Implemented here: the reference deployment and the grant→firewall projection.
 Not implemented here and tracked separately:
 
-* **G-03** device identity binding of the peer *key* and *tunnel address* to
-  the Guardian device id at the gateway, L7 header/identity policy and
-  per-request authentication. Here the tunnel source address is the identity;
-  anti-spoofing relies on WireGuard cryptokey routing, `rp_filter` and the
-  `ip saddr` check.
 * **G-04** device-side policy refresh over the WebSocket wake channel.
 * **G-05** staged/atomic reconciliation with key rotation grace periods and
-  documented propagation SLOs. The 2 s sync interval is a default, not an SLO.
+  documented propagation SLOs. The 2 s sync interval is a default, not an SLO;
+  during a rotation the device is denied service access until the reconciler
+  has swapped the kernel peer.
 * IPv6 tunnel addresses are not projected into sets (never allowed).
+* Per-request device authentication at the gateway (e.g. signed identity
+  assertions to backends) is intentionally absent; add it only for endpoints
+  that need it and are reached through this gateway.

@@ -158,6 +158,12 @@ services:
       UPSTREAM_DAV: ${UPSTREAM_DAV}
       UPSTREAM_FLEET: ${UPSTREAM_FLEET}
       UPSTREAM_ACS: ${UPSTREAM_ACS}
+      UPSTREAM_DAV_TRUST: ${UPSTREAM_DAV_TRUST:-/pki/upstream-ca.pem}
+      UPSTREAM_FLEET_TRUST: ${UPSTREAM_FLEET_TRUST:-/pki/upstream-ca.pem}
+      UPSTREAM_ACS_TRUST: ${UPSTREAM_ACS_TRUST:-/pki/upstream-ca.pem}
+      UPSTREAM_DAV_SNI: ${UPSTREAM_DAV_SNI:-sunkardav}
+      UPSTREAM_FLEET_SNI: ${UPSTREAM_FLEET_SNI:-admiral}
+      UPSTREAM_ACS_SNI: ${UPSTREAM_ACS_SNI:-sunkarcwmp-acs}
     volumes:
       - ./Caddyfile.gateway:/etc/caddy/Caddyfile:ro
       - ${STATE_DIR:-./state}/pki:/pki:ro
