@@ -108,6 +108,9 @@ func (s *Server) adminUpdateService(w http.ResponseWriter, r *http.Request, prin
 		writeCatalogError(w, err)
 		return
 	}
+	if result.Changed {
+		signalHubFor(s).publishPolicy("", result.PolicyRevision)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service": result.Definition, "policy_revision": result.PolicyRevision, "changed": result.Changed,
 	})
@@ -172,6 +175,9 @@ func (s *Server) adminSetServiceGrant(w http.ResponseWriter, r *http.Request, pr
 	if result.Changed {
 		status = http.StatusCreated
 	}
+	if result.Changed {
+		signalHubFor(s).publishPolicy("", result.PolicyRevision)
+	}
 	writeJSON(w, status, map[string]any{"grant": result.Grant, "policy_revision": result.PolicyRevision, "changed": result.Changed})
 }
 
@@ -180,6 +186,9 @@ func (s *Server) adminRevokeServiceGrant(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		writeCatalogError(w, err)
 		return
+	}
+	if result.Changed {
+		signalHubFor(s).publishPolicy("", result.PolicyRevision)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"grant": result.Grant, "policy_revision": result.PolicyRevision, "changed": result.Changed})
 }
@@ -213,6 +222,9 @@ func (s *Server) adminSetDeviceScopes(w http.ResponseWriter, r *http.Request, pr
 		writeCatalogError(w, err)
 		return
 	}
+	if result.Changed {
+		signalHubFor(s).publishPolicy("", result.PolicyRevision)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"scopes": result.Scopes, "policy_revision": result.PolicyRevision, "changed": result.Changed,
 	})
@@ -222,6 +234,7 @@ func (s *Server) adminSetDeviceScopes(w http.ResponseWriter, r *http.Request, pr
 // device. It is read-only, keyed only by the device credential, and contains
 // no credentials, upstream URLs with paths, or administrative endpoints.
 func (s *Server) deviceServices(w http.ResponseWriter, r *http.Request, principal domain.DevicePrincipal) {
+	w.Header().Set("Cache-Control", "no-store")
 	policy, err := s.store.DeviceServicePolicy(r.Context(), principal.DeviceID)
 	if err != nil {
 		writeCatalogError(w, err)

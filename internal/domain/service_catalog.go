@@ -354,11 +354,13 @@ type DeviceServiceEndpoint struct {
 
 // DeviceServicePolicy is the effective policy returned to a device.
 type DeviceServicePolicy struct {
-	DeviceID    string                  `json:"device_id"`
-	AccessState string                  `json:"access_state"`
-	Revision    int64                   `json:"revision"`
-	GeneratedAt string                  `json:"generated_at"`
-	Services    []DeviceServiceEndpoint `json:"services"`
+	DeviceID     string                  `json:"device_id"`
+	AccessState  string                  `json:"access_state"`
+	Revision     int64                   `json:"revision"`
+	GeneratedAt  string                  `json:"generated_at"`
+	ExpiresAt    string                  `json:"expires_at"`
+	MandatoryVPN bool                    `json:"mandatory_vpn"`
+	Services     []DeviceServiceEndpoint `json:"services"`
 }
 
 // AdminServiceDecision is one row of the administrative effective-policy view.

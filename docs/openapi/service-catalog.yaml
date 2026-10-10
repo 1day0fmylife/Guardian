@@ -113,12 +113,14 @@ components:
         group_ids: { type: array, items: { type: string }, maxItems: 64 }
     DeviceServicePolicy:
       type: object
-      required: [device_id, access_state, revision, generated_at, services]
+      required: [device_id, access_state, revision, generated_at, expires_at, mandatory_vpn, services]
       properties:
         device_id: { type: string }
         access_state: { type: string, enum: [active, pending, suspended, revoking, revoked] }
         revision: { type: integer, format: int64 }
         generated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        mandatory_vpn: { type: boolean, enum: [true] }
         services:
           type: array
           items:

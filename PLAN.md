@@ -275,3 +275,15 @@ Status:
 - Guardian-managed WireGuard server/node lifecycle.
 - mTLS device identity/enrollment.
 - HA/multi-region control plane.
+
+## G-04 — service discovery refresh (2026-10-10)
+
+- [x] Reuse the G-01 versioned service catalog, per-device/scoped grants,
+  services.read/services.manage API and migration 006.
+- [x] Authenticated secret-free device policy includes mandatory VPN and expiry.
+- [x] Existing WebSocket wakes policy refresh with monotonic coalesced revisions;
+  durable revision polling covers other server instances.
+- [x] API/OpenAPI and downstream polling/backoff contract documented in
+  docs/device-websocket.md and docs/g-04-implementation.md.
+- [ ] Installed device refresh/backoff and packet-path acceptance (G-03/G-05
+  and downstream client); repository fixtures are not hardware evidence.
