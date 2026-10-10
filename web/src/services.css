@@ -1,0 +1,12 @@
+.service-dialog { max-width: min(560px, calc(100vw - 32px)); padding: 24px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; }
+.service-dialog::backdrop { background: #0008; }
+.service-catalog { border-top: 1px solid var(--border); padding: 20px 0; }
+.service-catalog fieldset { border: 0; padding: 0; margin: 0; }
+.service-check { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.service-check input { width: auto; }
+summary { cursor: pointer; padding: 12px 0; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.provisioning-qr { display: block; width: min(100%, 320px); height: auto; background: white; margin: 16px auto; }
+
+.services-panel .badge.danger { color: var(--danger); background: var(--danger-bg); }
+.services-panel .badge.ok { color: var(--success); background: var(--success-bg); }

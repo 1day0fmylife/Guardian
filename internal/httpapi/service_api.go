@@ -17,6 +17,7 @@ func (s *Server) registerServiceCatalogRoutes(mux *http.ServeMux) {
 	wrap := func(h http.HandlerFunc) http.Handler {
 		return s.requestIDMiddleware(s.securityHeaders(h))
 	}
+	mux.Handle("GET /api/v1/devices/{id}/audit", wrap(s.require(rbac.AuditRead, s.adminDeviceAudit)))
 	mux.Handle("GET /api/v1/services", wrap(s.require(rbac.ServicesRead, s.adminListServices)))
 	mux.Handle("GET /api/v1/services/{id}", wrap(s.require(rbac.ServicesRead, s.adminGetService)))
 	mux.Handle("PUT /api/v1/services/{id}", wrap(s.require(rbac.ServicesManage, s.adminUpdateService)))
@@ -241,4 +242,17 @@ func (s *Server) deviceServices(w http.ResponseWriter, r *http.Request, principa
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)
+}
+
+func (s *Server) adminDeviceAudit(w http.ResponseWriter, r *http.Request, _ domain.Principal) {
+	limit, offset := pagination(r)
+	items, total, err := s.store.ListDeviceAuditEvents(r.Context(), r.PathValue("id"), limit, offset)
+	if err != nil {
+		writeManagementStoreError(w, err)
+		return
+	}
+	if items == nil {
+		items = []domain.AuditEvent{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "limit": limit, "offset": offset})
 }

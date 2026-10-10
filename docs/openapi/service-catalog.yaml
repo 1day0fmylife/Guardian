@@ -333,3 +333,45 @@ paths:
           description: Policy
           content: { application/json: { schema: { $ref: '#/components/schemas/DeviceServicePolicy' } } }
         '401': { $ref: '#/components/responses/Error' }
+  /devices/{id}/audit:
+    parameters:
+      - { $ref: '#/components/parameters/DeviceId' }
+      - { $ref: '#/components/parameters/Limit' }
+      - { $ref: '#/components/parameters/Offset' }
+    get:
+      tags: [Service catalog]
+      summary: Device actions and individual grant audit history (audit.read)
+      description: >
+        Includes events targeting this device and its explicit device grants,
+        including revoked grants. Global catalog and scoped-grant changes remain
+        in the existing global audit endpoint. Never includes enrollment tokens.
+      security: [{ adminSession: [] }]
+      responses:
+        '200':
+          description: Paginated audit events, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, limit, offset]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        actor_user_id: { type: string }
+                        action: { type: string }
+                        resource_type: { type: string }
+                        resource_id: { type: string }
+                        source_ip: { type: string }
+                        request_id: { type: string }
+                        details: { type: string, description: Sanitized audit JSON encoded as a string }
+                        created_at: { type: string, format: date-time }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
