@@ -12,3 +12,4 @@
 /web/*.tsbuildinfo
 /.playwright-cli/
 /output/playwright/
+bin/guardian
