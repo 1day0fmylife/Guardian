@@ -21,16 +21,23 @@ import (
 
 func main() {
 	var (
-		table    = flag.String("table", "guardian_gw", "nftables inet table that declares the service sets")
-		interval = flag.Duration("interval", 2*time.Second, "reconcile interval")
-		staleTTL = flag.Duration("stale-ttl", 30*time.Second, "flush all sets when policy cannot be refreshed for this long")
-		resync   = flag.Duration("resync", 10*time.Second, "re-apply an unchanged policy this often (recovers from ruleset reloads)")
-		once     = flag.Bool("once", false, "synchronize once and exit")
-		dryRun   = flag.Bool("dry-run", false, "print the nft script instead of applying it")
-		iface    = flag.String("interface", "wg0", "WireGuard interface whose peer table is verified against Guardian's bindings")
-		noVerify = flag.Bool("skip-peer-verification", false, "UNSAFE: trust the database without checking the kernel peer table (dry runs only)")
+		table          = flag.String("table", "guardian_gw", "nftables inet table that declares the service sets")
+		interval       = flag.Duration("interval", 2*time.Second, "reconcile interval")
+		staleTTL       = flag.Duration("stale-ttl", 30*time.Second, "flush all sets when policy cannot be refreshed for this long")
+		resync         = flag.Duration("resync", 10*time.Second, "re-apply an unchanged policy this often (recovers from ruleset reloads)")
+		once           = flag.Bool("once", false, "synchronize once and exit")
+		dryRun         = flag.Bool("dry-run", false, "print the nft script instead of applying it")
+		iface          = flag.String("interface", "wg0", "WireGuard interface whose peer table is verified against Guardian's bindings")
+		callbackSource = flag.String("cwmp-cr-source", "", "opt-in ACS VIP for the separately installed IPv4 Connection Request profile")
+		noVerify       = flag.Bool("skip-peer-verification", false, "UNSAFE: trust the database without checking the kernel peer table (dry runs only)")
 	)
 	flag.Parse()
+	if *callbackSource != "" {
+		if _, err := gatewayacl.RenderConnectionRequests(*table, *callbackSource, nil); err != nil {
+			fmt.Fprintln(os.Stderr, "invalid cwmp-cr-source/table")
+			os.Exit(2)
+		}
+	}
 	if *interval <= 0 || *interval > 5*time.Second || *staleTTL <= 0 || *staleTTL > gatewayacl.MembershipTTL || *resync <= 0 || *resync > gatewayacl.MembershipTTL/3 {
 		fmt.Fprintln(os.Stderr, "interval must be in (0,5s], stale-ttl in (0,30s], resync in (0,10s]")
 		os.Exit(2)
@@ -67,7 +74,7 @@ func main() {
 		source = readOnlySource{Source: st}
 	}
 	syncer := &gatewayacl.Syncer{
-		Source: source, Applier: applier, Table: *table,
+		Source: source, Applier: applier, Table: *table, ConnectionRequestSource: *callbackSource,
 		ServiceIDs: domain.KnownServiceIDs(), StaleTTL: *staleTTL, ResyncInterval: *resync,
 	}
 	if !*noVerify {

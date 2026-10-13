@@ -129,7 +129,9 @@ type Syncer struct {
 	Applier    Applier
 	Table      string
 	ServiceIDs []string
-	StaleTTL   time.Duration
+	// ConnectionRequestSource opts into the separately declared reverse CR set.
+	ConnectionRequestSource string
+	StaleTTL                time.Duration
 	// Observer, when set, supplies the live WireGuard peer table. Targets
 	// whose Guardian binding is not what the kernel enforces are dropped
 	// (see VerifyBindings). Leaving it nil disables verification and must
@@ -196,7 +198,7 @@ func (s *Syncer) SyncOnce(ctx context.Context) (SyncResult, error) {
 		}
 		targets, rejected, unexpected = VerifyBindings(targets, observed)
 	}
-	script, err := Render(s.Table, s.ServiceIDs, targets)
+	script, err := s.render(targets)
 	if err != nil {
 		return s.failClosed(ctx, err)
 	}
@@ -236,7 +238,7 @@ func (s *Syncer) failClosed(ctx context.Context, cause error) (SyncResult, error
 
 func (s *Syncer) denyAll(ctx context.Context, cause error) (SyncResult, error) {
 	// Never synced successfully or stale for too long: deny everything.
-	empty, err := Render(s.Table, s.ServiceIDs, nil)
+	empty, err := s.render(nil)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("%v; render empty policy: %w", cause, err)
 	}
@@ -263,4 +265,48 @@ func (s *Syncer) Run(ctx context.Context, interval time.Duration, onResult func(
 		case <-ticker.C:
 		}
 	}
+}
+
+// render keeps the existing gateway profile unchanged unless CR is opted in.
+func (s *Syncer) render(targets []store.ServiceAccessTarget) (string, error) {
+	script, err := Render(s.Table, s.ServiceIDs, targets)
+	if err != nil || s.ConnectionRequestSource == "" {
+		return script, err
+	}
+	callback, err := RenderConnectionRequests(s.Table, s.ConnectionRequestSource, targets)
+	return script + callback, err
+}
+
+// RenderConnectionRequests grants only verified, currently authorized ACS peers.
+// This projection is renewed/flushed in the same transaction as service grants.
+func RenderConnectionRequests(table, source string, targets []store.ServiceAccessTarget) (string, error) {
+	if !tableNamePattern.MatchString(table) {
+		return "", fmt.Errorf("invalid nftables table name")
+	}
+	address, err := netip.ParseAddr(source)
+	if err != nil || !address.Is4() || !address.IsPrivate() || !address.IsGlobalUnicast() || address.String() != source {
+		return "", fmt.Errorf("invalid callback source")
+	}
+	peers := make(map[netip.Addr]bool)
+	for _, target := range targets {
+		if !target.Address.Is4() || !target.Address.IsPrivate() || target.CWMPConnectionRequestSource != source {
+			continue
+		}
+		for _, service := range target.ServiceIDs {
+			if service == "sunkarcwmp-acs" {
+				peers[target.Address] = true
+			}
+		}
+	}
+	addresses := make([]netip.Addr, 0, len(peers))
+	for peer := range peers {
+		addresses = append(addresses, peer)
+	}
+	sort.Slice(addresses, func(i, j int) bool { return addresses[i].Less(addresses[j]) })
+	var b strings.Builder
+	fmt.Fprintf(&b, "flush set inet %s cwmp_cr_v4\n", table)
+	for _, peer := range addresses {
+		fmt.Fprintf(&b, "add element inet %s cwmp_cr_v4 { %s timeout 30s }\n", table, peer)
+	}
+	return b.String(), nil
 }

@@ -17,6 +17,7 @@ COPY --from=build /out/guardian /usr/local/bin/guardian
 COPY --from=build /out/guardian-gateway-acl /usr/local/bin/guardian-gateway-acl
 COPY deploy/service-gateway/gateway-init.sh /usr/local/bin/gateway-init.sh
 COPY deploy/service-gateway/nftables.conf.tmpl /etc/guardian-gateway/nftables.conf.tmpl
+COPY deploy/service-gateway/cwmp-cr.nft.tmpl /etc/guardian-gateway/cwmp-cr.nft.tmpl
 COPY deploy/service-gateway/dnsmasq.conf.tmpl /etc/guardian-gateway/dnsmasq.conf.tmpl
 COPY deploy/service-gateway/scripts/tester.sh /usr/local/bin/gateway-tester.sh
 RUN chmod 0755 /usr/local/bin/gateway-init.sh /usr/local/bin/gateway-tester.sh

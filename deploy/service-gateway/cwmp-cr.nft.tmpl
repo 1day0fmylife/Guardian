@@ -1,0 +1,14 @@
+# Explicit opt-in, routed IPv4 CR only. No default/peer/admin forwarding.
+# Apply after the base gateway ruleset, whose cwmp_cr_v4 starts empty.
+insert rule inet ${NFT_TABLE} forward iifname "${CWMP_CR_BACKEND_INTERFACE}" oifname "${WG_INTERFACE}" ip saddr ${CWMP_CR_BACKEND_ADDRESS} ip daddr @cwmp_cr_v4 tcp dport 7547 ct state { new, established } accept
+insert rule inet ${NFT_TABLE} forward iifname "${WG_INTERFACE}" oifname "${CWMP_CR_BACKEND_INTERFACE}" ip saddr @cwmp_cr_v4 ip daddr ${CWMP_CR_BACKEND_ADDRESS} tcp sport 7547 ct original ip saddr ${CWMP_CR_BACKEND_ADDRESS} ct original ip daddr @cwmp_cr_v4 ct original proto-dst 7547 ct state established accept
+add table ip ${NFT_TABLE}_cr_nat
+delete table ip ${NFT_TABLE}_cr_nat
+table ip ${NFT_TABLE}_cr_nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname "${WG_INTERFACE}" ip saddr ${CWMP_CR_BACKEND_ADDRESS} tcp dport 7547 snat to ${VIP_ACS}
+    }
+    # The filter's expiring grant is authoritative on every packet, including replies.
+    # Only packets admitted by the default-drop forward filter reach SNAT.
+}

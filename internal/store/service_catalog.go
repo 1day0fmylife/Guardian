@@ -94,15 +94,25 @@ func (s *Store) ServicePolicyRevision(ctx context.Context) (int64, error) {
 const serviceDefinitionColumns = `
 	d.id, r.revision, r.display_name, r.internal_dns_name, r.protocol, r.port,
 	r.tls_policy, r.allowed_scopes, r.enabled, COALESCE(r.created_by_user_id, ''),
-	d.created_at, r.created_at`
+	d.created_at, r.created_at, r.connection_request`
 
 func scanServiceDefinition(scan scanFunc) (domain.ServiceDefinition, error) {
 	var def domain.ServiceDefinition
-	var scopes string
+	var scopes, callback string
 	var enabled int
 	if err := scan(&def.ID, &def.Revision, &def.DisplayName, &def.InternalDNSName, &def.Protocol,
-		&def.Port, &def.TLSPolicy, &scopes, &enabled, &def.UpdatedByUserID, &def.CreatedAt, &def.UpdatedAt); err != nil {
+		&def.Port, &def.TLSPolicy, &scopes, &enabled, &def.UpdatedByUserID, &def.CreatedAt, &def.UpdatedAt, &callback); err != nil {
 		return domain.ServiceDefinition{}, err
+	}
+	if callback != "" {
+		var policy domain.ConnectionRequestPolicy
+		if err := json.Unmarshal([]byte(callback), &policy); err != nil {
+			return domain.ServiceDefinition{}, fmt.Errorf("decode callback policy: %w", err)
+		}
+		if err := policy.Validate(); err != nil || def.ID != domain.ServiceSunkarCWMPACS {
+			return domain.ServiceDefinition{}, fmt.Errorf("invalid callback policy for service")
+		}
+		def.ConnectionRequest = &policy
 	}
 	def.Enabled = enabled != 0
 	def.AllowedScopes = splitCSV(scopes)
@@ -230,6 +240,9 @@ type ServiceUpdateResult struct {
 // service. expectedRevision guards against concurrent edits. Re-sending the
 // content that is already current is a successful no-op, so retries are safe.
 func (s *Store) UpdateServiceDefinition(ctx context.Context, meta AuditMeta, id string, expectedRevision int64, input domain.ServiceDefinitionInput) (ServiceUpdateResult, error) {
+	if input.ConnectionRequest != nil && id != domain.ServiceSunkarCWMPACS {
+		return ServiceUpdateResult{}, catalogErr(ErrInvalid, "invalid_service_definition", "connection_request is only supported for sunkarcwmp-acs")
+	}
 	if expectedRevision <= 0 {
 		return ServiceUpdateResult{}, catalogErr(ErrInvalid, "expected_revision_required", "a positive expected_revision is required")
 	}
@@ -250,7 +263,7 @@ func (s *Store) UpdateServiceDefinition(ctx context.Context, meta AuditMeta, id 
 	currentInput := domain.ServiceDefinitionInput{
 		DisplayName: current.DisplayName, InternalDNSName: current.InternalDNSName,
 		Protocol: current.Protocol, Port: current.Port, TLSPolicy: current.TLSPolicy,
-		AllowedScopes: current.AllowedScopes, Enabled: current.Enabled,
+		AllowedScopes: current.AllowedScopes, Enabled: current.Enabled, ConnectionRequest: current.ConnectionRequest,
 	}
 	if reflect.DeepEqual(currentInput, input) {
 		revision, err := s.readServicePolicyRevision(ctx, tx)
@@ -265,13 +278,21 @@ func (s *Store) UpdateServiceDefinition(ctx context.Context, meta AuditMeta, id 
 
 	now := nowText()
 	next := current.Revision + 1
+	callback := ""
+	if input.ConnectionRequest != nil {
+		raw, err := json.Marshal(input.ConnectionRequest)
+		if err != nil {
+			return ServiceUpdateResult{}, fmt.Errorf("encode callback policy: %w", err)
+		}
+		callback = string(raw)
+	}
 	if _, err := tx.ExecContext(ctx, s.q(`
 		INSERT INTO service_definition_revisions(
 			service_id, revision, display_name, internal_dns_name, protocol, port,
-			tls_policy, allowed_scopes, enabled, created_by_user_id, created_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)
+			tls_policy, allowed_scopes, enabled, created_by_user_id, created_at, connection_request
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?)
 	`), id, next, input.DisplayName, input.InternalDNSName, input.Protocol, input.Port,
-		input.TLSPolicy, strings.Join(input.AllowedScopes, ","), boolInt(input.Enabled), meta.ActorUserID, now); err != nil {
+		input.TLSPolicy, strings.Join(input.AllowedScopes, ","), boolInt(input.Enabled), meta.ActorUserID, now, callback); err != nil {
 		return ServiceUpdateResult{}, fmt.Errorf("insert service revision: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, s.q(`
@@ -289,16 +310,17 @@ func (s *Store) UpdateServiceDefinition(ctx context.Context, meta AuditMeta, id 
 		return ServiceUpdateResult{}, err
 	}
 	if err := s.appendAuditTx(ctx, tx, meta, "service.update", "service", id, map[string]any{
-		"revision":          next,
-		"previous_revision": current.Revision,
-		"enabled":           input.Enabled,
-		"previous_enabled":  current.Enabled,
-		"internal_dns_name": input.InternalDNSName,
-		"port":              input.Port,
-		"protocol":          input.Protocol,
-		"tls_policy":        input.TLSPolicy,
-		"allowed_scopes":    input.AllowedScopes,
-		"policy_revision":   policyRevision,
+		"revision":           next,
+		"previous_revision":  current.Revision,
+		"enabled":            input.Enabled,
+		"previous_enabled":   current.Enabled,
+		"connection_request": input.ConnectionRequest,
+		"internal_dns_name":  input.InternalDNSName,
+		"port":               input.Port,
+		"protocol":           input.Protocol,
+		"tls_policy":         input.TLSPolicy,
+		"allowed_scopes":     input.AllowedScopes,
+		"policy_revision":    policyRevision,
 	}); err != nil {
 		return ServiceUpdateResult{}, err
 	}
@@ -833,7 +855,7 @@ func (s *Store) DeviceServicePolicyObserved(ctx context.Context, deviceID string
 		}
 		policy.Services = append(policy.Services, domain.DeviceServiceEndpoint{
 			ID: def.ID, DisplayName: def.DisplayName, Host: def.InternalDNSName,
-			Port: def.Port, Protocol: def.Protocol, TLSPolicy: def.TLSPolicy, Revision: def.Revision,
+			Port: def.Port, Protocol: def.Protocol, TLSPolicy: def.TLSPolicy, Revision: def.Revision, ConnectionRequest: def.ConnectionRequest,
 		})
 	}
 	return policy, nil
