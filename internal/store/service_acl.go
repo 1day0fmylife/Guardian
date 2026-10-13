@@ -20,13 +20,14 @@ import (
 // gateway must only honor the grant for traffic that the kernel can attribute
 // to that same key and address (see gatewayacl.VerifyBindings).
 type ServiceAccessTarget struct {
-	DeviceID        string
-	PeerID          string
-	PublicKey       string
-	Address         netip.Addr
-	ConfigRevision  int64
-	AppliedRevision int64
-	ServiceIDs      []string
+	DeviceID                    string
+	PeerID                      string
+	PublicKey                   string
+	Address                     netip.Addr
+	ConfigRevision              int64
+	AppliedRevision             int64
+	CWMPConnectionRequestSource string
+	ServiceIDs                  []string
 }
 
 // ServiceAccessSnapshot is a transactionally consistent view of the service ACL.
@@ -186,9 +187,13 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 			deviceScopes = *sc
 		}
 		allowed := []string{}
+		callbackSource := ""
 		for _, def := range definitions {
 			if domain.EvaluateServiceAccess(def, p.deviceID, true, deviceScopes, grants).Allowed {
 				allowed = append(allowed, def.ID)
+				if def.ID == domain.ServiceSunkarCWMPACS && def.ConnectionRequest != nil {
+					callbackSource = def.ConnectionRequest.SourceAddress
+				}
 			}
 		}
 		if len(allowed) == 0 {
@@ -197,7 +202,7 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 		sort.Strings(allowed)
 		snap.Targets = append(snap.Targets, ServiceAccessTarget{
 			DeviceID: p.deviceID, PeerID: p.peerID, PublicKey: p.publicKey, Address: p.address,
-			ConfigRevision: p.configRevision, AppliedRevision: p.applied, ServiceIDs: allowed,
+			ConfigRevision: p.configRevision, AppliedRevision: p.applied, ServiceIDs: allowed, CWMPConnectionRequestSource: callbackSource,
 		})
 	}
 	return snap, nil

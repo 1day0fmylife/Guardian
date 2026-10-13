@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strings"
@@ -77,36 +78,65 @@ func KnownServiceIDs() []string {
 	return []string{ServiceSunkarDAV, ServiceAdmiralDevice, ServiceSunkarCWMPACS}
 }
 
+// CWMPConnectionRequestPort is the only managed callback port.
+const CWMPConnectionRequestPort = 7547
+
+// ConnectionRequestPolicy grants the ACS service VIP an IPv4 callback capability.
+// Absence means disabled; it contains no device credentials.
+type ConnectionRequestPolicy struct {
+	SourceAddress string `json:"source_address"`
+	Port          int    `json:"port"`
+}
+
+// Validate rejects broad or public callback origins and arbitrary ports.
+func (p ConnectionRequestPolicy) Validate() error {
+	a, err := netip.ParseAddr(p.SourceAddress)
+	if err != nil || !a.Is4() || !a.IsPrivate() || !a.IsGlobalUnicast() || a.String() != p.SourceAddress || p.Port != CWMPConnectionRequestPort {
+		return fmt.Errorf("connection_request requires a private IPv4 source and port 7547")
+	}
+	return nil
+}
+
 // ServiceDefinition is one immutable revision of a catalog entry. The current
 // revision of each service is the one used for policy evaluation.
 type ServiceDefinition struct {
-	ID              string   `json:"id"`
-	Revision        int64    `json:"revision"`
-	DisplayName     string   `json:"display_name"`
-	InternalDNSName string   `json:"internal_dns_name"`
-	Protocol        string   `json:"protocol"`
-	Port            int      `json:"port"`
-	TLSPolicy       string   `json:"tls_policy"`
-	AllowedScopes   []string `json:"allowed_scopes"`
-	Enabled         bool     `json:"enabled"`
-	UpdatedByUserID string   `json:"updated_by_user_id,omitempty"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ConnectionRequest *ConnectionRequestPolicy `json:"connection_request,omitempty"`
+	ID                string                   `json:"id"`
+	Revision          int64                    `json:"revision"`
+	DisplayName       string                   `json:"display_name"`
+	InternalDNSName   string                   `json:"internal_dns_name"`
+	Protocol          string                   `json:"protocol"`
+	Port              int                      `json:"port"`
+	TLSPolicy         string                   `json:"tls_policy"`
+	AllowedScopes     []string                 `json:"allowed_scopes"`
+	Enabled           bool                     `json:"enabled"`
+	UpdatedByUserID   string                   `json:"updated_by_user_id,omitempty"`
+	CreatedAt         string                   `json:"created_at"`
+	UpdatedAt         string                   `json:"updated_at"`
 }
 
 // ServiceDefinitionInput is the mutable part of a service definition.
 type ServiceDefinitionInput struct {
-	DisplayName     string   `json:"display_name"`
-	InternalDNSName string   `json:"internal_dns_name"`
-	Protocol        string   `json:"protocol"`
-	Port            int      `json:"port"`
-	TLSPolicy       string   `json:"tls_policy"`
-	AllowedScopes   []string `json:"allowed_scopes"`
-	Enabled         bool     `json:"enabled"`
+	ConnectionRequest *ConnectionRequestPolicy `json:"connection_request,omitempty"`
+	DisplayName       string                   `json:"display_name"`
+	InternalDNSName   string                   `json:"internal_dns_name"`
+	Protocol          string                   `json:"protocol"`
+	Port              int                      `json:"port"`
+	TLSPolicy         string                   `json:"tls_policy"`
+	AllowedScopes     []string                 `json:"allowed_scopes"`
+	Enabled           bool                     `json:"enabled"`
 }
 
 // Normalize trims and canonicalizes the input in place and validates it.
 func (in *ServiceDefinitionInput) Normalize() error {
+	if in.ConnectionRequest != nil {
+		policy := *in.ConnectionRequest
+		if err := policy.Validate(); err != nil {
+			return err
+		}
+		in.ConnectionRequest = &policy
+	}
+
 	in.DisplayName = strings.TrimSpace(in.DisplayName)
 	in.InternalDNSName = strings.ToLower(strings.TrimSpace(in.InternalDNSName))
 	in.Protocol = strings.ToLower(strings.TrimSpace(in.Protocol))
@@ -141,6 +171,9 @@ func (in *ServiceDefinitionInput) Normalize() error {
 		return fmt.Errorf("protocol http requires tls_policy disabled")
 	}
 
+	if in.ConnectionRequest != nil && (in.Protocol != ServiceProtocolHTTPS || in.TLSPolicy != TLSPolicyRequired) {
+		return fmt.Errorf("connection_request requires the HTTPS/TLS ACS service")
+	}
 	scopes := make([]string, 0, len(in.AllowedScopes))
 	seen := map[string]struct{}{}
 	for _, scope := range in.AllowedScopes {
@@ -346,13 +379,14 @@ func betterGrant(candidate, current ServiceGrant) bool {
 // DeviceServiceEndpoint is the non-secret description of one permitted
 // service as seen by a device. It never carries credentials or admin URLs.
 type DeviceServiceEndpoint struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Protocol    string `json:"protocol"`
-	TLSPolicy   string `json:"tls_policy"`
-	Revision    int64  `json:"revision"`
+	ConnectionRequest *ConnectionRequestPolicy `json:"connection_request,omitempty"`
+	ID                string                   `json:"id"`
+	DisplayName       string                   `json:"display_name"`
+	Host              string                   `json:"host"`
+	Port              int                      `json:"port"`
+	Protocol          string                   `json:"protocol"`
+	TLSPolicy         string                   `json:"tls_policy"`
+	Revision          int64                    `json:"revision"`
 }
 
 // DeviceServicePolicy is the effective policy returned to a device.

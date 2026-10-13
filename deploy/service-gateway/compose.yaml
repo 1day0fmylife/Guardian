@@ -111,6 +111,9 @@ services:
       VIP_DAV: ${VIP_DAV}
       VIP_FLEET: ${VIP_FLEET}
       VIP_ACS: ${VIP_ACS}
+      CWMP_CR_SOURCE: ${CWMP_CR_SOURCE:-}
+      CWMP_CR_BACKEND_ADDRESS: ${CWMP_CR_BACKEND_ADDRESS:-}
+      CWMP_CR_BACKEND_INTERFACE: ${CWMP_CR_BACKEND_INTERFACE:-}
     ports:
       - "${WG_PUBLIC_BIND:-0.0.0.0}:${WG_PORT:-51820}:${WG_PORT:-51820}/udp"
     volumes:
@@ -215,7 +218,7 @@ services:
     image: guardian-gateway:local
     network_mode: "service:wg-gateway"
     restart: unless-stopped
-    command: ["/usr/local/bin/guardian-gateway-acl", "-interval", "2s", "-stale-ttl", "30s"]
+    command: ["/usr/local/bin/guardian-gateway-acl", "-interval", "2s", "-stale-ttl", "30s", "-cwmp-cr-source", "${CWMP_CR_SOURCE:-}"]
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
     security_opt: ["no-new-privileges:true"]

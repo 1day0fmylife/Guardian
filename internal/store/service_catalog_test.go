@@ -582,6 +582,8 @@ func testServicePolicyMigrationUpgrade(t *testing.T, st *Store) {
 		"DROP TABLE service_definitions",
 		"DROP TABLE service_policy_state",
 		"DELETE FROM schema_migrations WHERE version = 6",
+		// The simulated pre-006 table also predates its later callback column.
+		"DELETE FROM schema_migrations WHERE version = 10",
 	} {
 		if _, err := st.db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)

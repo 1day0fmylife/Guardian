@@ -6,7 +6,7 @@ For hosts without Docker. The topology and firewall are identical to
 ```
 install -d -m 0750 /etc/guardian-gateway
 install -m 0755 ../gateway-init.sh /usr/local/sbin/gateway-init.sh
-install -m 0644 ../nftables.conf.tmpl ../dnsmasq.conf.tmpl ../Caddyfile.gateway /etc/guardian-gateway/
+install -m 0644 ../nftables.conf.tmpl ../cwmp-cr.nft.tmpl ../dnsmasq.conf.tmpl ../Caddyfile.gateway /etc/guardian-gateway/
 install -m 0755 guardian guardian-gateway-acl /usr/local/bin/        # built from this repo
 cp gateway.env.example /etc/guardian-gateway/gateway.env              # edit
 cp guardian.env.example /etc/guardian-gateway/guardian.env            # edit

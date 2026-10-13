@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -94,7 +96,8 @@ func (s *Server) adminGetService(w http.ResponseWriter, r *http.Request, _ domai
 }
 
 type serviceUpdateRequest struct {
-	ExpectedRevision int64 `json:"expected_revision"`
+	ConnectionRequestJSON json.RawMessage `json:"connection_request"`
+	ExpectedRevision      int64           `json:"expected_revision"`
 	domain.ServiceDefinitionInput
 }
 
@@ -103,6 +106,22 @@ func (s *Server) adminUpdateService(w http.ResponseWriter, r *http.Request, prin
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
+	}
+	// Omission preserves the capability for existing admin clients; explicit null revokes.
+	if len(input.ConnectionRequestJSON) == 0 {
+		current, err := s.store.GetServiceDefinition(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeCatalogError(w, err)
+			return
+		}
+		input.ConnectionRequest = current.ConnectionRequest
+	} else {
+		decoder := json.NewDecoder(bytes.NewReader(input.ConnectionRequestJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input.ConnectionRequest); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "invalid connection_request policy")
+			return
+		}
 	}
 	result, err := s.store.UpdateServiceDefinition(r.Context(), auditMeta(r, principal), r.PathValue("id"),
 		input.ExpectedRevision, input.ServiceDefinitionInput)

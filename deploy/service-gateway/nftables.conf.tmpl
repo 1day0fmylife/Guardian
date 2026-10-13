@@ -27,6 +27,13 @@ table inet ${NFT_TABLE} {
         timeout 30s
     }
 
+    # Remains empty unless the explicit reverse-CR profile and projector are enabled.
+    set cwmp_cr_v4 {
+        type ipv4_addr
+        flags timeout
+        timeout 30s
+    }
+
     chain input {
         type filter hook input priority filter; policy drop;
 
