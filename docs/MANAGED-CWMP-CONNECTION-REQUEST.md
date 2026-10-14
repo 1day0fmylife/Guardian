@@ -44,6 +44,13 @@ callback access open.
    `CWMP_CR_SOURCE=10.78.0.12` (equal to `VIP_ACS`),
    `CWMP_CR_BACKEND_ADDRESS=<one private ACS backend IPv4 address>`, and
    `CWMP_CR_BACKEND_INTERFACE=<actual backend-facing interface>`.
+   For Docker set `CWMP_CR_IP_FORWARD=1`; the runtime configures forwarding
+   before mounting `/proc/sys` read-only. Gateway interfaces are pinned:
+   public `eth0`, upstream `eth1`, control `eth2`. Set the backend interface
+   according to the actual backend route. The reference deployment requires Docker Engine >= 28.1 and Compose >= 2.36
+   for `interface_name`; `deploy.sh` checks the Engine before starting containers.
+   Validate Compose parsing using `docker compose config --quiet`.
+   Gateway acceptance CI installs Engine 28.1.1 explicitly.
    Compose passes the source to `guardian-gateway-acl -cwmp-cr-source`.
    For systemd, the network unit reads `gateway.env`; the projector reads
    `guardian.env`, which must contain the same `CWMP_CR_SOURCE`.

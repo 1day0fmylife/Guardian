@@ -71,5 +71,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker with deterministic interface support
+        uses: docker/setup-docker-action@v5
+        with:
+          version: v28.1.1
       - name: Service gateway acceptance (WireGuard, nftables, DNS, TLS)
         run: deploy/service-gateway/scripts/verify.sh
