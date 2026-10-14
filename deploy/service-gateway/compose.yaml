@@ -99,7 +99,7 @@ services:
     cap_add: [NET_ADMIN]
     security_opt: ["no-new-privileges:true"]
     sysctls:
-      net.ipv4.ip_forward: "0"
+      net.ipv4.ip_forward: "${CWMP_CR_IP_FORWARD:-0}"
       net.ipv6.conf.all.forwarding: "0"
       net.ipv4.conf.all.rp_filter: "1"
     environment:
@@ -118,7 +118,13 @@ services:
       - "${WG_PUBLIC_BIND:-0.0.0.0}:${WG_PORT:-51820}:${WG_PORT:-51820}/udp"
     volumes:
       - ${STATE_DIR:-./state}/wg/private.key:/run/secrets/wg_private_key:ro
-    networks: [public, control, upstream]
+    networks:
+      public:
+        interface_name: eth0
+      upstream:
+        interface_name: eth1
+      control:
+        interface_name: eth2
     healthcheck:
       test: ["CMD-SHELL", "test -f /run/gateway-ready && wg show wg0 >/dev/null && nft list table inet guardian_gw >/dev/null"]
       interval: 5s

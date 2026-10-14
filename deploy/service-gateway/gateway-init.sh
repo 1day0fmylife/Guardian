@@ -52,7 +52,10 @@ if [ -n "${CWMP_CR_BACKEND_ADDRESS:-}" ]; then
         < /etc/guardian-gateway/cwmp-cr.nft.tmpl > /run/guardian-cwmp-cr.nft
     nft -c -f /run/guardian-cwmp-cr.nft
     nft -f /run/guardian-cwmp-cr.nft
-    echo 1 > /proc/sys/net/ipv4/ip_forward
+    # Docker can preconfigure this namespace sysctl with read-only /proc/sys.
+    if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]; then
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+    fi
 fi
 
 touch /run/gateway-ready

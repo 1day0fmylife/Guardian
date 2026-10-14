@@ -10,3 +10,8 @@ cache-size=0
 address=/${DAV_FQDN}/${VIP_DAV}
 address=/${FLEET_FQDN}/${VIP_FLEET}
 address=/${ACS_FQDN}/${VIP_ACS}
+
+# Local authority must return empty NOERROR for AAAA, never recurse upstream.
+local=/${DAV_FQDN}/
+local=/${FLEET_FQDN}/
+local=/${ACS_FQDN}/
