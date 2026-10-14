@@ -61,6 +61,11 @@ func (s *Server) requireDevice(activeRequired bool, next deviceHandler) http.Han
 		}
 		principal, err := s.store.DevicePrincipalByCredential(r.Context(), security.HashToken(token))
 		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				w.Header().Set("Retry-After", "5")
+				writeError(w, http.StatusServiceUnavailable, "device_authentication_unavailable", "device authentication is temporarily unavailable")
+				return
+			}
 			if r.URL.Path == "/api/v1/device/services" {
 				s.metrics.AuthenticationDenied()
 			}
