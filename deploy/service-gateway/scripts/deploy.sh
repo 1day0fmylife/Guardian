@@ -18,6 +18,14 @@ for tool in docker openssl; do
     command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 docker compose version >/dev/null
+engine_version=$(docker version --format '{{.Server.Version}}')
+engine_version=${engine_version%%-*}
+IFS=. read -r engine_major engine_minor _ <<<"$engine_version"
+if ! [[ "$engine_major" =~ ^[0-9]+$ && "$engine_minor" =~ ^[0-9]+$ ]] ||
+    (( engine_major < 28 || (engine_major == 28 && engine_minor < 1) )); then
+    echo "Docker Engine >= 28.1 is required for deterministic gateway interface names (found $engine_version)" >&2
+    exit 1
+fi
 
 envfile="$state/.env"
 if [[ ! -f "$envfile" ]]; then
