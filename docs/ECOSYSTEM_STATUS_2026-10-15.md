@@ -1,0 +1,44 @@
+# Экосистема Arlan — проверенный статус 15 октября 2026
+
+> Координационный tracker: [Guardian #17](https://github.com/1day0fmylife/Guardian/issues/17). Это датированная сводка на основании фактических GitHub main/PR/Issue и project-owned evidence, а не новый запуск стендовых тестов. Полный Codex backlog содержит 45 неизменных ID; дополнительные follow-up issues — раскрытие остатка, не новые ID. Историческая редакция: [12.10.2026](ECOSYSTEM_STATUS_2026-10-12.md).
+
+## Архитектура и границы доверия
+
+Managed ArlanPhone должен достигать SunkarDAV (DAV user authorization), Admiral **device-facing** API (own device identity, signed update authorization) и SunkarCWMP ACS (unique per-device ACS Digest) **только** через Guardian-managed WireGuard, private DNS/TLS, explicit device-service grants и fail-closed source/destination policy. Guardian не выдаёт универсальные upstream credentials, не публикует Admiral admin API или ACS NBI в устройственной сети и не подменяет cryptographic firmware verification. SIP/RTP/ArlanMeet не направляются через Guardian по умолчанию.
+
+**Исправление прежнего baseline:** managed CWMP Connection Request больше не безусловно запрещён. Слиты [Guardian #19](https://github.com/1day0fmylife/Guardian/pull/19)/[#20](https://github.com/1day0fmylife/Guardian/pull/20) и [ArlanPhone #139](https://github.com/1day0fmylife/ArlanPhone/pull/139)/[#144](https://github.com/1day0fmylife/ArlanPhone/pull/144): опциональный, **по умолчанию выключенный** IPv4 CR с явной per-device capability, scoped WG/ACS source, TTL/revoke, отдельным от обычного periodic Inform. Публичного WAN listener не добавлено. При включении требуется обновлённый Core/netd/provider/gateway, а не изменение только каталога Guardian.
+
+## Точные проверенные головы `main`
+
+| Репозиторий | SHA |
+|---|---|
+| Guardian | `66897e5b654cb1e171315ec0078be7a0c4abee09` |
+| ArlanPhone | `cafc76d623ddff77af06c3299a6323525150d73e` |
+| Admiral | `f75ddb652a8f85c497e99ec3d10a4ca796a5c0dc` |
+| SunkarCWMP | `f5a7789f8ac5232bb92d346cc08c15b1161eaffd` |
+| SunkarDAV | `7fe05a9d59b6b04d8dc292600a6298d7bf0f591b` |
+| ArlanMeet | `a8ff17f8b671e401e836543093f6d6e9c7122632` |
+
+**Сводная классификация 45 исходных ID:** 26 объёмов слиты (G-01…08, A-01…05/A-07, M-01…03, C-01…04, D-01…05); 8 частичны (G-09, A-06, A-08, M-04, T-01, X-01…03); 11 открыты/отложены (A-09/A-10, M-05/M-06, C-05/C-06, T-02…06). Это статус исходного task scope, а не общий production-ready verdict.
+
+## Изменения с 12 октября и свидетельства
+
+- **Guardian:** кроме CR, [#21](https://github.com/1day0fmylife/Guardian/pull/21) исправил ложное отключение device managed services при PostgreSQL outage: device authentication возвращает retryable `503 device_authentication_unavailable` / Retry-After, а не `401 invalid_device_credential`. Без восстановления доступа в период недоступности БД; проверить в общей X-02. Старый docs [#18](https://github.com/1day0fmylife/Guardian/pull/18) **уже слит** и исторический.
+- **ArlanPhone/Admiral:** actual Core sealed M-02 ACS credential flow в [Phone #138](https://github.com/1day0fmylife/ArlanPhone/pull/138) и [Admiral #18](https://github.com/1day0fmylife/Admiral/pull/18), 33 native-mTLS/ACS contract checks, но сам fixture не является WireGuard end-to-end. [Admiral #20](https://github.com/1day0fmylife/Admiral/pull/20) использовал **точные байты выбранного ACS executable** в packaged QEMU, базовые 40 и 14 resilience = **54/54**, включая реальный Chromium. [Admiral #19](https://github.com/1day0fmylife/Admiral/pull/19) установил audit retention 365 дней и backup 3 календарных года; [SunkarCWMP #51](https://github.com/1day0fmylife/SunkarCWMP/pull/51) подключил проверяемые off-host export/verify/purge и таймеры.
+- **SunkarCWMP private-CA/IPv4 pilot:** [owner-supplied report](https://github.com/1day0fmylife/SunkarCWMP/blob/main/deploy/acs-single-node/evidence/pilot-2026-10-15/report.json) и [PR #54](https://github.com/1day0fmylife/SunkarCWMP/pull/54) имеют `deploymentGate=accepted`: **11 drills accepted + operator-approved IPv6 waiver**, installed native collector **80 pass, 0 fail/warn/skip**; отдельный off-host collector 78 pass/1 warning (escrow filename-glob, TLS and 0600 independently inspected). Подтверждены encrypted separate off-host restore + escrow, whole CPE reboot/RTC, физический IPv4 CR/Inform event6 → Admiral (восстановлена исходная CR-disabled конфигурация), real PostgreSQL outage 150s/recovery, alert webhooks, audit retention, actual ACS certificate/master-key rotation. Релиз `acs-v0.1.0-pilot.1` **подготовлен локально**, `prepared=true`, `tagged=false`, `published=false`. Release commit `1e97e659fad7da6a00e229369f9b55e5bc991140`, installed ACS binary SHA256 `e3333c1f8fcebb8735d1c53af12f60b8d8cd1841203a9a96edc6e0cf60349170`; released build checked reproducible with two byte-identical builds and independent evidence checksum gate. Pilot deliberately excludes public DNS/ACME, IPv6, second physical CPE and staffed external paging. The recorded 55.64s observed backup age is **not** guaranteed daily-timer RPO. Broad [SunkarCWMP #19](https://github.com/1day0fmylife/SunkarCWMP/issues/19) remains OPEN.
+- **ArlanPhone feature delta:** [#141](https://github.com/1day0fmylife/ArlanPhone/pull/141) ZRTP policy, [#142](https://github.com/1day0fmylife/ArlanPhone/pull/142) contact-group calls, [#143](https://github.com/1day0fmylife/ArlanPhone/pull/143) AEC3 and #140–#156 UI/audio improve client features; separate real board/PBX/media gate remains. Signed A/B installation is still not completed by prior #134 durable intent or the ACS pilot reboot.
+- **SunkarDAV:** [#48](https://github.com/1day0fmylife/SunkarDAV/pull/48) IPPhoneBook XML importer, [#49](https://github.com/1day0fmylife/SunkarDAV/pull/49)/[#50](https://github.com/1day0fmylife/SunkarDAV/pull/50) voice intents/dialogue/Kazakh TTS code. #50 explicitly did **not** load the offline Kazakh model. These do not resolve DAV SDK release. Actual Phone `core/go.mod` still pins old `v0.0.0-20260929041142-f3707190f124`, which has the known bounded-read/transport lease regression repaired in SunkarDAV #44.
+- **ArlanMeet:** main unchanged since [#21](https://github.com/1day0fmylife/ArlanMeet/pull/21); clean-host media and physical interoperability [#22](https://github.com/1day0fmylife/ArlanMeet/issues/22) OPEN.
+
+## Remaining work, prioritized (do not duplicate merged implementation)
+
+1. **P0: [Guardian #17](https://github.com/1day0fmylife/Guardian/issues/17), X-01:** one exact pinned shared-peer manifest with managed DAV read/write/account auth, actual Core sealed ACS redemption/Inform→Admiral and signed Admiral/Phone OTA assignment/Range over Guardian, PCAP, private TLS/DNS/ACL and public-backend denial. Distinct completed fixtures are **not** this full common suite.
+2. **P0: Guardian #17, X-02:** one 18/18 original negative/recovery test matrix on the same manifest; include #21 503/no false revoke, managed CR opt-in/expiry/established-flow revoke, DNS/IPv4/IPv6/public redirect spoofing, other-device identity, outages, independent SIP, OTA interruption. Explicit `PASS/FAIL/BLOCKED/NOT RUN/WAIVED`; an IPv6 pilot waiver is not a PASS.
+3. **P1: [ArlanPhone #136](https://github.com/1day0fmylife/ArlanPhone/issues/136)** board-specific signed RAUC A/B, trusted boot slot, anti-rollback, mark-good only after health, power-cut and true physical evidence; whole-CPE ACS reboot is not sufficient.
+4. **P1: [SunkarDAV #47](https://github.com/1day0fmylife/SunkarDAV/issues/47) → [ArlanPhone #137](https://github.com/1day0fmylife/ArlanPhone/issues/137):** publish/qualify immutable nested Go SDK and update **real** consumer pin/go.sum with race/interop/QEMU. #137 reopened after exact main inspection.
+5. **P1: [SunkarCWMP #12](https://github.com/1day0fmylife/SunkarCWMP/issues/12) / [ArlanPhone #68](https://github.com/1day0fmylife/ArlanPhone/issues/68):** actual status.sock negative physical UID/GID/permission/Core-secret/POST ACL on named board/image; physical CR and CPE reboot do not prove these. [ArlanMeet #22](https://github.com/1day0fmylife/ArlanMeet/issues/22): real PBX endpoint, 1/2/4/8/16 clean-host media and group/AEC/ZRTP checks.
+6. **Release/extended pilot** is a separate operator publication and scope decision. Do not assert a tag has been pushed. Typed CWMP A-09/C-05/M-05 only after a combined accepted read-only chain. Full G-09 remote-node HA only after proven need.
+
+## Issue synchronization 15 October
+
+Updated Guardian #17, ArlanPhone #68/#136, reopened ArlanPhone #137 (old DAV pin still present), SunkarDAV #47, Admiral #2, SunkarCWMP #2/#12, ArlanMeet #22. SunkarCWMP #19 already contained its detailed October 15 owner acceptance; it was preserved unmodified. Historical bodies were preserved below the new dated notices. A documentation-only update does not execute test commands, install firmware, publish releases or modify service/access control code.
