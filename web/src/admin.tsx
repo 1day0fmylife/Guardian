@@ -1,9 +1,23 @@
 import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState,
+  type SortingState,
+} from '@tanstack/react-table'
 import axios from 'axios'
 import {
   createRole,
+  lockUser,
+  unlockUser,
+  type UserListParams,
+  type UserSortKey,
+  type UserStatusFilter,
   createUser,
   getMe,
   getSettings,
@@ -34,48 +48,139 @@ function hasPermission(permissions: string[] | undefined, permission: string) {
   return Boolean(permissions?.includes(permission))
 }
 
+const userPageSizes = [10, 25, 50, 100] as const
+
 export function UsersPage() {
   const queryClient = useQueryClient()
-  const users = useQuery({ queryKey: ['admin-users'], queryFn: listUsers })
   const roles = useQuery({ queryKey: ['admin-roles'], queryFn: listRoles })
   const me = useQuery({ queryKey: ['me'], queryFn: getMe })
-  const [editing, setEditing] = React.useState<User | null>(null)
+  const [search, setSearch] = React.useState('')
+  const [debouncedSearch, setDebouncedSearch] = React.useState('')
+  const [status, setStatus] = React.useState<UserStatusFilter>('')
+  const [role, setRole] = React.useState('')
+  const [sorting, setSorting] = React.useState<SortingState>([{ id: 'username', desc: false }])
+  const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 25 })
+  const [editingId, setEditingId] = React.useState<string | null>(null)
   const canCreate = hasPermission(me.data?.permissions, 'users.create')
   const canUpdate = hasPermission(me.data?.permissions, 'users.update')
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [search])
+  // Any filter change returns to the first page so the offset stays valid.
+  React.useEffect(() => { setPagination((current) => ({ ...current, pageIndex: 0 })) }, [debouncedSearch, status, role])
+
+  const params: UserListParams = {
+    limit: pagination.pageSize,
+    offset: pagination.pageIndex * pagination.pageSize,
+    q: debouncedSearch,
+    status,
+    role,
+    sort: (sorting[0]?.id as UserSortKey | undefined) ?? 'username',
+    desc: sorting[0]?.desc ?? false,
+  }
+  const users = useQuery({ queryKey: ['admin-users', params], queryFn: () => listUsers(params), placeholderData: keepPreviousData })
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['admin-users'] })
     await queryClient.invalidateQueries({ queryKey: ['me'] })
   }
 
-  if (users.isPending || roles.isPending || me.isPending) return <LoadingPanel />
-  if (users.isError) return <ErrorPanel error={users.error} retry={() => users.refetch()} />
+  const columns = React.useMemo<ColumnDef<User>[]>(() => [
+    { id: 'username', header: 'User', enableSorting: true, cell: ({ row }) => <div className="device-name"><strong>{row.original.display_name || row.original.username}</strong><span>{row.original.username}</span></div> },
+    { id: 'roles', header: 'Roles', enableSorting: false, cell: ({ row }) => <div className="chip-row">{row.original.roles.map((value) => <span className="count-chip" key={value}>{value}</span>)}</div> },
+    { id: 'status', header: 'Status', enableSorting: false, cell: ({ row }) => <UserStatus user={row.original} /> },
+    { id: 'created_at', header: 'Created', enableSorting: true, cell: ({ row }) => formatDate(row.original.created_at) },
+    { id: 'updated_at', header: 'Updated', enableSorting: true, cell: ({ row }) => formatDate(row.original.updated_at) },
+    { id: 'actions', header: () => <span className="sr-only">Actions</span>, enableSorting: false, cell: ({ row }) => canUpdate ? <button className="secondary-button" type="button" onClick={() => setEditingId(row.original.id)}>Manage</button> : null },
+  ], [canUpdate])
+
+  const total = users.data?.total ?? 0
+  const table = useReactTable({
+    data: users.data?.items ?? [],
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    manualSorting: true,
+    enableSortingRemoval: false,
+    rowCount: total,
+    state: { sorting, pagination },
+    onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    getRowId: (user) => user.id,
+  })
+
+  if (roles.isPending || me.isPending) return <LoadingPanel />
   if (roles.isError) return <ErrorPanel error={roles.error} retry={() => roles.refetch()} />
+  const editing = users.data?.items.find((user) => user.id === editingId) ?? null
+  const firstRow = total === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1
+  const lastRow = Math.min(total, (pagination.pageIndex + 1) * pagination.pageSize)
 
   return (
     <section className="page-stack">
-      <PageHeading title="Users" description="Administrator accounts and assigned RBAC roles." />
+      <PageHeading title="Users" description="Guardian accounts and their RBAC roles. New accounts and password resets issue a temporary password that must be changed at first sign-in." count={users.data ? `${total} users` : undefined} />
       {canCreate && <UserCreateForm roles={roles.data ?? []} onCreated={refresh} />}
+      {editing && <UserEditPanel key={editing.id} user={editing} roles={roles.data ?? []} currentUserId={me.data?.user_id ?? ''} onClose={() => setEditingId(null)} onSaved={refresh} />}
       <article className="table-panel">
-        <div className="table-scroll">
-          <table className="data-table admin-table">
-            <thead><tr><th>User</th><th>Roles</th><th>Status</th><th>Updated</th><th /></tr></thead>
-            <tbody>
-              {(users.data ?? []).map((user) => (
-                <tr key={user.id}>
-                  <td><div className="device-name"><strong>{user.display_name || user.username}</strong><span>{user.username}</span></div></td>
-                  <td><div className="chip-row">{user.roles.map((role) => <span className="count-chip" key={role}>{role}</span>)}</div></td>
-                  <td><span className={`badge ${user.disabled ? 'warn' : 'ok'}`}><span className="dot" />{user.disabled ? 'Disabled' : 'Active'}</span></td>
-                  <td>{formatDate(user.updated_at)}</td>
-                  <td className="table-actions">{canUpdate && <button className="secondary-button" type="button" onClick={() => setEditing(user)}>Edit</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="table-toolbar" role="search">
+          <label className="field-label search">Search<input type="search" placeholder="Username or display name" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+          <label className="field-label">Status<select value={status} onChange={(e) => setStatus(e.target.value as UserStatusFilter)}><option value="">All</option><option value="active">Active</option><option value="disabled">Locked</option><option value="password_change">Password change pending</option></select></label>
+          <label className="field-label">Role<select value={role} onChange={(e) => setRole(e.target.value)}><option value="">Any role</option>{(roles.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        </div>
+        {users.isError ? <ErrorPanel error={users.error} retry={() => users.refetch()} /> : (
+          <div className="table-scroll">
+            <table className="data-table admin-table" aria-busy={users.isFetching}>
+              <thead>{table.getHeaderGroups().map((group) => <tr key={group.id}>{group.headers.map((header) => {
+                const sorted = header.column.getIsSorted()
+                return <th key={header.id} aria-sort={sorted === 'asc' ? 'ascending' : sorted === 'desc' ? 'descending' : undefined}>
+                  {header.column.getCanSort()
+                    ? <button className="sort-button" type="button" onClick={header.column.getToggleSortingHandler()}>{flexRender(header.column.columnDef.header, header.getContext())}<span className="material-symbols-rounded" aria-hidden="true">{sorted === 'asc' ? 'arrow_upward' : sorted === 'desc' ? 'arrow_downward' : 'unfold_more'}</span></button>
+                    : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              })}</tr>)}</thead>
+              <tbody>
+                {users.isPending && <tr><td className="empty-cell" colSpan={columns.length}>Loading…</td></tr>}
+                {table.getRowModel().rows.map((row) => <tr key={row.id}>{row.getVisibleCells().map((cell) => <td key={cell.id} className={cell.column.id === 'actions' ? 'table-actions' : undefined}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>)}</tr>)}
+                {!users.isPending && table.getRowModel().rows.length === 0 && <tr><td className="empty-cell" colSpan={columns.length}>No users match the current filters.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="table-pager">
+          <span>{firstRow}–{lastRow} of {total}</span>
+          <div className="pager-buttons">
+            <label className="field-label">Rows<select value={pagination.pageSize} onChange={(e) => table.setPageSize(Number(e.target.value))}>{userPageSizes.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+            <button className="secondary-button" type="button" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()} aria-label="Previous page"><span className="material-symbols-rounded">chevron_left</span></button>
+            <span>Page {pagination.pageIndex + 1} of {Math.max(1, table.getPageCount())}</span>
+            <button className="secondary-button" type="button" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()} aria-label="Next page"><span className="material-symbols-rounded">chevron_right</span></button>
+          </div>
         </div>
       </article>
-      {editing && <UserEditPanel user={editing} roles={roles.data ?? []} currentUserId={me.data?.user_id ?? ''} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh() }} />}
     </section>
+  )
+}
+
+export function UserStatus({ user }: { user: User }) {
+  if (user.disabled) return <span className="badge warn"><span className="dot" />Locked</span>
+  if (user.must_change_password) return <span className="badge neutral"><span className="dot" />Password change pending</span>
+  return <span className="badge ok"><span className="dot" />Active</span>
+}
+
+/** Random temporary password; the user must replace it at first sign-in. */
+export function generateTemporaryPassword(length = 20) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_'
+  const bytes = new Uint32Array(length)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join('')
+}
+
+function TemporaryPasswordField({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
+  return (
+    <div className="temp-password">
+      <label className="field-label">{label}<input type="text" spellCheck={false} autoComplete="off" value={value} onChange={(e) => onChange(e.target.value)} /></label>
+      <button className="secondary-button" type="button" onClick={() => onChange(generateTemporaryPassword())}><span className="material-symbols-rounded">casino</span>Generate</button>
+    </div>
   )
 }
 
@@ -84,42 +189,56 @@ function UserCreateForm({ roles, onCreated }: { roles: Role[]; onCreated: () => 
   const [displayName, setDisplayName] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [selectedRoles, setSelectedRoles] = React.useState<string[]>(['viewer'])
+  const [created, setCreated] = React.useState<string | null>(null)
   const mutation = useMutation({
     mutationFn: () => createUser({ username: username.trim(), display_name: displayName.trim(), password, roles: selectedRoles }),
-    onSuccess: async () => { setUsername(''); setDisplayName(''); setPassword(''); setSelectedRoles(['viewer']); await onCreated() },
+    onSuccess: async (user) => { setCreated(user.username); setUsername(''); setDisplayName(''); setPassword(''); setSelectedRoles(['viewer']); await onCreated() },
   })
   return (
     <article className="panel admin-form-panel">
-      <div><h2>Create user</h2><p>Create a Guardian administrator/operator account and assign one or more roles.</p></div>
+      <div><h2>Create user</h2><p>Assign one or more roles and a temporary password. Hand the password over out of band; Guardian requires the user to change it at first sign-in.</p></div>
       <div className="form-grid three">
         <label className="field-label">Username<input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></label>
         <label className="field-label">Display name<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} /></label>
-        <label className="field-label">Initial password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" /></label>
+        <TemporaryPasswordField label="Temporary password" value={password} onChange={setPassword} />
       </div>
       <RoleChecklist roles={roles} selected={selectedRoles} onChange={setSelectedRoles} />
-      {mutation.isError && <div className="alert danger">{errorMessage(mutation.error)}</div>}
-      <div><button className="primary-button" type="button" disabled={mutation.isPending || !username.trim() || !password || selectedRoles.length === 0} onClick={() => mutation.mutate()}>{mutation.isPending ? 'Creating…' : 'Create user'}</button></div>
+      {mutation.isError && <div className="alert danger" role="alert">{errorMessage(mutation.error)}</div>}
+      {created && !mutation.isError && <div className="alert success" role="status">User {created} created. They must change the temporary password at first sign-in.</div>}
+      <div><button className="primary-button" type="button" disabled={mutation.isPending || !username.trim() || password.length < 12 || selectedRoles.length === 0} onClick={() => { setCreated(null); mutation.mutate() }}>{mutation.isPending ? 'Creating…' : 'Create user'}</button></div>
     </article>
   )
 }
 
 function UserEditPanel({ user, roles, currentUserId, onClose, onSaved }: { user: User; roles: Role[]; currentUserId: string; onClose: () => void; onSaved: () => Promise<void> }) {
   const [displayName, setDisplayName] = React.useState(user.display_name)
-  const [disabled, setDisabled] = React.useState(user.disabled)
   const [selectedRoles, setSelectedRoles] = React.useState<string[]>(user.roles)
   const [newPassword, setNewPassword] = React.useState('')
-  const save = useMutation({ mutationFn: () => updateUser(user.id, { display_name: displayName.trim(), disabled, roles: selectedRoles }), onSuccess: onSaved })
-  const password = useMutation({ mutationFn: () => resetUserPassword(user.id, newPassword), onSuccess: async () => { setNewPassword(''); await onSaved() } })
+  const [notice, setNotice] = React.useState<string | null>(null)
+  const save = useMutation({ mutationFn: () => updateUser(user.id, { display_name: displayName.trim(), disabled: user.disabled, roles: selectedRoles }), onSuccess: async () => { setNotice('Roles saved.'); await onSaved() } })
+  const lock = useMutation({ mutationFn: () => user.disabled ? unlockUser(user.id) : lockUser(user.id), onSuccess: async (updated) => { setNotice(updated.disabled ? 'Account locked; its sessions were revoked.' : 'Account unlocked.'); await onSaved() } })
+  const password = useMutation({ mutationFn: () => resetUserPassword(user.id, newPassword), onSuccess: async () => { setNewPassword(''); setNotice('Temporary password set. The user must change it at next sign-in; existing sessions were revoked.'); await onSaved() } })
   const self = user.id === currentUserId
+  const error = save.error || lock.error || password.error
   return (
-    <article className="panel admin-editor">
-      <div className="editor-heading"><div><h2>Edit {user.username}</h2><p>Changing roles applies on the next authenticated request. Disabling an account revokes its sessions.</p></div><button className="icon-button" type="button" aria-label="Close" onClick={onClose}><span className="material-symbols-rounded">close</span></button></div>
+    <article className="panel admin-editor user-editor">
+      <div className="editor-heading"><div><h2>Manage {user.username}</h2><p>Role changes apply on the next request. You can only grant roles whose permissions you hold.</p></div><button className="icon-button" type="button" aria-label="Close" onClick={onClose}><span className="material-symbols-rounded">close</span></button></div>
+      <div><UserStatus user={user} /></div>
       <label className="field-label">Display name<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} /></label>
       <RoleChecklist roles={roles} selected={selectedRoles} onChange={setSelectedRoles} />
-      <label className="toggle-row"><input type="checkbox" checked={disabled} disabled={self} onChange={(e) => setDisabled(e.target.checked)} /><span>Disable account{self ? ' (cannot disable current account)' : ''}</span></label>
-      {(save.isError || password.isError) && <div className="alert danger">{errorMessage(save.error || password.error)}</div>}
-      <div className="editor-actions"><button className="primary-button" type="button" disabled={save.isPending || selectedRoles.length === 0} onClick={() => save.mutate()}>Save changes</button></div>
-      <div className="password-reset"><label className="field-label">New password<input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" /></label><button className="secondary-button" type="button" disabled={password.isPending || !newPassword} onClick={() => password.mutate()}>Reset password</button></div>
+      {error && <div className="alert danger" role="alert">{errorMessage(error)}</div>}
+      {notice && !error && <div className="alert success" role="status">{notice}</div>}
+      <div className="editor-actions split">
+        <button className="primary-button" type="button" disabled={save.isPending || selectedRoles.length === 0} onClick={() => save.mutate()}>Save roles</button>
+        <button className="secondary-button" type="button" disabled={lock.isPending || (self && !user.disabled)} title={self ? 'You cannot lock your own account' : undefined} onClick={() => lock.mutate()}>
+          <span className="material-symbols-rounded">{user.disabled ? 'lock_open' : 'lock'}</span>{user.disabled ? 'Unlock account' : 'Lock account'}
+        </button>
+      </div>
+      {!self && <div className="password-reset">
+        <TemporaryPasswordField label="New temporary password" value={newPassword} onChange={setNewPassword} />
+        <button className="secondary-button" type="button" disabled={password.isPending || newPassword.length < 12} onClick={() => password.mutate()}>Reset password</button>
+      </div>}
+      {self && <p className="form-note">Change your own password from the account menu.</p>}
     </article>
   )
 }
