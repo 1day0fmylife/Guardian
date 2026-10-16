@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -63,7 +64,28 @@ func (s *Store) UserCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// CreateBootstrapUser creates the first superadmin through the interactive
+// /auth/bootstrap flow. The operator chose the password, so no forced change.
 func (s *Store) CreateBootstrapUser(ctx context.Context, username, displayName, passwordHash string) (domain.User, error) {
+	return s.createFirstSuperadmin(ctx, username, displayName, passwordHash, false)
+}
+
+// EnsureBootstrapAdmin creates the first superadmin from deployment
+// configuration when no user exists yet. It is idempotent: once any user exists
+// it returns created=false without touching accounts. The configured password
+// must be replaced on first sign-in.
+func (s *Store) EnsureBootstrapAdmin(ctx context.Context, username, displayName, passwordHash string) (domain.User, bool, error) {
+	user, err := s.createFirstSuperadmin(ctx, username, displayName, passwordHash, true)
+	if errors.Is(err, ErrConflict) {
+		return domain.User{}, false, nil
+	}
+	if err != nil {
+		return domain.User{}, false, err
+	}
+	return user, true, nil
+}
+
+func (s *Store) createFirstSuperadmin(ctx context.Context, username, displayName, passwordHash string, mustChange bool) (domain.User, error) {
 	username = strings.TrimSpace(strings.ToLower(username))
 	displayName = strings.TrimSpace(displayName)
 	if username == "" {
@@ -91,10 +113,11 @@ func (s *Store) CreateBootstrapUser(ctx context.Context, username, displayName, 
 	now := nowText()
 
 	if _, err := tx.ExecContext(ctx, s.q(`
-		INSERT INTO users(id, username, display_name, password_hash, disabled, created_at, updated_at)
-		VALUES(?, ?, ?, ?, 0, ?, ?)
-	`), id, username, displayName, passwordHash, now, now); err != nil {
-		return domain.User{}, fmt.Errorf("create bootstrap user: %w", err)
+		INSERT INTO users(id, username, display_name, password_hash, disabled, must_change_password, created_at, updated_at)
+		VALUES(?, ?, ?, ?, 0, ?, ?, ?)
+	`), id, username, displayName, passwordHash, boolInt(mustChange), now, now); err != nil {
+		// A concurrent replica may have won the race for the same username.
+		return domain.User{}, mapConflict(err, "create bootstrap user")
 	}
 	if _, err := tx.ExecContext(ctx, s.q(`
 		INSERT INTO user_roles(user_id, role_id) VALUES(?, ?)
@@ -107,12 +130,13 @@ func (s *Store) CreateBootstrapUser(ctx context.Context, username, displayName, 
 	}
 
 	return domain.User{
-		ID:          id,
-		Username:    username,
-		DisplayName: displayName,
-		Roles:       []string{"superadmin"},
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:                 id,
+		Username:           username,
+		DisplayName:        displayName,
+		Roles:              []string{"superadmin"},
+		MustChangePassword: mustChange,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}, nil
 }
 
@@ -124,14 +148,14 @@ type loginUser struct {
 func (s *Store) FindUserForLogin(ctx context.Context, username string) (loginUser, error) {
 	username = strings.TrimSpace(strings.ToLower(username))
 	var u loginUser
-	var disabled int
+	var disabled, mustChange int
 	err := s.db.QueryRowContext(ctx, s.q(`
-		SELECT id, username, display_name, password_hash, disabled, created_at, updated_at
+		SELECT id, username, display_name, password_hash, disabled, must_change_password, created_at, updated_at
 		FROM users
 		WHERE username = ?
 	`), username).Scan(
 		&u.ID, &u.Username, &u.DisplayName, &u.PasswordHash,
-		&disabled, &u.CreatedAt, &u.UpdatedAt,
+		&disabled, &mustChange, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -140,7 +164,53 @@ func (s *Store) FindUserForLogin(ctx context.Context, username string) (loginUse
 		return loginUser{}, fmt.Errorf("find user: %w", err)
 	}
 	u.Disabled = disabled != 0
+	u.MustChangePassword = mustChange != 0
 	return u, nil
+}
+
+// PasswordHashForUser returns the stored hash for re-authentication checks.
+func (s *Store) PasswordHashForUser(ctx context.Context, userID string) (string, error) {
+	var hash string
+	err := s.db.QueryRowContext(ctx, s.q(`SELECT password_hash FROM users WHERE id = ?`), userID).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("load password hash: %w", err)
+	}
+	return hash, nil
+}
+
+// ChangeOwnPassword replaces the user's password, clears the forced-change
+// flag and revokes every other session so a leaked temporary password cannot
+// keep a parallel session alive.
+func (s *Store) ChangeOwnPassword(ctx context.Context, userID, passwordHash, keepSessionTokenHash string) error {
+	if userID == "" || passwordHash == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin password change: %w", err)
+	}
+	defer tx.Rollback()
+	now := nowText()
+	result, err := tx.ExecContext(ctx, s.q(`
+		UPDATE users SET password_hash = ?, must_change_password = 0, password_changed_at = ?, updated_at = ?
+		WHERE id = ? AND disabled = 0
+	`), passwordHash, now, now, userID)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM auth_sessions WHERE user_id = ? AND token_hash <> ?`), userID, keepSessionTokenHash); err != nil {
+		return fmt.Errorf("revoke other sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit password change: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID, tokenHash string, expiresAt time.Time) (string, error) {
@@ -170,13 +240,13 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 func (s *Store) PrincipalBySession(ctx context.Context, tokenHash string, now time.Time) (domain.Principal, error) {
 	var p domain.Principal
 	var expiresAt string
-	var disabled int
+	var disabled, mustChange int
 	err := s.db.QueryRowContext(ctx, s.q(`
-		SELECT s.id, s.user_id, u.username, u.display_name, u.disabled, s.expires_at
+		SELECT s.id, s.user_id, u.username, u.display_name, u.disabled, u.must_change_password, s.expires_at
 		FROM auth_sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = ?
-	`), tokenHash).Scan(&p.SessionID, &p.UserID, &p.Username, &p.DisplayName, &disabled, &expiresAt)
+	`), tokenHash).Scan(&p.SessionID, &p.UserID, &p.Username, &p.DisplayName, &disabled, &mustChange, &expiresAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return domain.Principal{}, ErrNotFound
@@ -186,6 +256,7 @@ func (s *Store) PrincipalBySession(ctx context.Context, tokenHash string, now ti
 	if disabled != 0 {
 		return domain.Principal{}, ErrNotFound
 	}
+	p.MustChangePassword = mustChange != 0
 	expiry, err := time.Parse(time.RFC3339Nano, expiresAt)
 	if err != nil || !expiry.After(now.UTC()) {
 		_ = s.DeleteSession(ctx, tokenHash)

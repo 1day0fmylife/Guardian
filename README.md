@@ -59,6 +59,18 @@ WireGuard private keys are generated on the managed device. Guardian stores only
 
 WireGuard peer changes are revisioned. Key rotation preserves the previous public key until the exact desired revision has been applied, so the old peer can be removed safely. Revocation is two-phase: the peer is removed first, and only after successful reconciliation are the address lease released and device credentials revoked.
 
+## Administrator accounts
+
+The WebUI signs in with a username and password; the API then issues an opaque bearer session (`gdn_s_…`, stored hash-only, TTL `GUARDIAN_SESSION_TTL`). Nobody needs to handle session tokens directly.
+
+**First administrator.** Set `GUARDIAN_BOOTSTRAP_ADMIN_USERNAME` (default `admin`) and `GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD` or `GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD_FILE` (see `.env.example`). On startup, if the database has no users, Guardian creates that account with the built-in `superadmin` role and audit event `auth.bootstrap.env`. The step is idempotent: once any user exists it is skipped, so changing the variable later never resets a password. The password is never logged; remove it from the environment after the first sign-in.
+
+Without these variables the interactive first-run flow is unchanged: the WebUI shows *Initialize Guardian* and calls `POST /api/v1/auth/bootstrap`, which answers `409 already_bootstrapped` once any user exists (including after env bootstrap).
+
+**Forced password change.** The env-bootstrapped administrator, every user created by an administrator, and every administrator password reset get `must_change_password=true`. Until the user calls `POST /api/v1/auth/password` with `current_password` and `new_password`, every other authenticated endpoint answers `403` with code `password_change_required`; only `GET /api/v1/me`, `POST /api/v1/auth/logout` and the password change itself stay reachable. Policy: 12–1024 characters, different from the current password and from the username. Hashing is Argon2id. A successful change clears the flag, revokes the user's other sessions and audits `auth.password.change` (failed attempts: `auth.password.change_failed`).
+
+**Roles and users.** Built-in roles are defined in `internal/rbac` as permission sets: `superadmin` (all permissions), `admin`, `operator`, `auditor` (read-only incl. audit, users and roles) and `viewer`. Endpoints check permissions only. User management (`/api/v1/users`) supports `limit`/`offset`, `q` (username/display name), `status` (`active`, `disabled`, `password_change`), `role`, and `sort` (`username`, `display_name`, `created_at`, `updated_at`; prefix `-` or `order=desc`). Mutations — create (temporary password), role change, `POST /users/{id}/lock` / `unlock`, password reset — are audited. An administrator can only grant roles and manage accounts whose permissions are a subset of its own (`403 privilege_escalation`), cannot lock itself, and the last active `superadmin` cannot be locked or demoted (`409 last_superadmin`). Accounts are locked rather than deleted so audit history stays attributable.
+
 ## Service gateway
 
 Devices reach SunkarDAV, Admiral and SunkarCWMP ACS only through a WireGuard-terminated service gateway whose firewall mirrors the Guardian service grants. See `docs/service-catalog.md` and `docs/service-gateway.md`; the production reference lives in `deploy/service-gateway/` (the root `compose.yaml` is development only).

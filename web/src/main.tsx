@@ -10,7 +10,7 @@ import {
   createRouter,
   useRouterState,
 } from '@tanstack/react-router'
-import { AuthGate } from './auth'
+import { AuthGate, ChangePasswordForm } from './auth'
 import { clearSession, getMe, listDevices, logout } from './api'
 import { AuditPage, CommandsPage, RolesPage, SettingsPage, UsersPage } from './admin'
 import { DeviceDetailPage, DevicesPage } from './devices'
@@ -50,6 +50,7 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith('/enrollments')) return 'Enrollments'
   if (pathname.startsWith('/vpn-profiles')) return 'VPN Profiles'
   if (pathname.startsWith('/address-pools')) return 'Address Pools'
+  if (pathname.startsWith('/account')) return 'Account'
   if (pathname.startsWith('/commands')) return 'Commands'
   if (pathname.startsWith('/users')) return 'Users'
   if (pathname.startsWith('/roles')) return 'Roles'
@@ -104,6 +105,7 @@ function Shell() {
           </div>
           <div className="topbar-actions">
             <button className="icon-button" aria-label="Toggle theme" type="button" onClick={() => setDark((value) => !value)}><span className="material-symbols-rounded">{dark ? 'light_mode' : 'dark_mode'}</span></button>
+            <Link className="icon-button" aria-label="Account and password" title={principal.data ? `Signed in as ${principal.data.username}` : 'Account'} to="/account"><span className="material-symbols-rounded">account_circle</span></Link>
             <button className="icon-button" aria-label="Sign out" disabled={signOut.isPending} type="button" onClick={() => signOut.mutate()}><span className="material-symbols-rounded">logout</span></button>
           </div>
         </header>
@@ -150,6 +152,17 @@ function Dashboard() {
   )
 }
 
+function AccountPage() {
+  const principal = useQuery({ queryKey: ['me'], queryFn: getMe, staleTime: 30_000 })
+  if (!principal.data) return <article className="panel loading-panel">Loading…</article>
+  return (
+    <section className="page-stack">
+      <div className="section-heading"><div><div className="eyebrow">Signed in as {principal.data.username}</div><h2>Account</h2><p>Roles: {principal.data.roles.join(', ') || 'none'}. Changing your password signs out your other sessions.</p></div></div>
+      <article className="panel admin-form-panel account-panel"><h2>Change password</h2><ChangePasswordForm username={principal.data.username} onChanged={() => undefined} /></article>
+    </section>
+  )
+}
+
 function DeviceDetailRoute() {
   const { deviceId } = deviceRoute.useParams()
   return <DeviceDetailPage deviceId={deviceId} />
@@ -162,12 +175,13 @@ const deviceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devic
 const enrollmentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/enrollments', component: EnrollmentsPage })
 const vpnProfilesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vpn-profiles', component: VPNProfilesPage })
 const addressPoolsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/address-pools', component: AddressPoolsPage })
+const accountRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account', component: AccountPage })
 const commandsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/commands', component: CommandsPage })
 const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/users', component: UsersPage })
 const rolesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/roles', component: RolesPage })
 const auditRoute = createRoute({ getParentRoute: () => rootRoute, path: '/audit', component: AuditPage })
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsPage })
-const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, vpnProfilesRoute, addressPoolsRoute, commandsRoute, usersRoute, rolesRoute, auditRoute, settingsRoute])
+const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, vpnProfilesRoute, addressPoolsRoute, accountRoute, commandsRoute, usersRoute, rolesRoute, auditRoute, settingsRoute])
 const router = createRouter({ routeTree })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -47,6 +47,8 @@ services:
       GUARDIAN_ENV: production
       GUARDIAN_SERVICE_ACL_REQUIRED: "true"
       GUARDIAN_WIREGUARD_INTERFACE: ""
+      GUARDIAN_BOOTSTRAP_ADMIN_USERNAME: ${GUARDIAN_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD: ${GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy

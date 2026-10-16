@@ -21,6 +21,9 @@ services:
       GUARDIAN_REDIS_URL: redis://redis:6379/0
       GUARDIAN_PUBLIC_URL: http://localhost:8088
       GUARDIAN_ENV: development
+      # Optional first superadmin; see .env.example (forced change at first sign-in).
+      GUARDIAN_BOOTSTRAP_ADMIN_USERNAME: ${GUARDIAN_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD: ${GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy

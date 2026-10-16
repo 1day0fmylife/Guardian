@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/1day0fmylife/Guardian/internal/adminbootstrap"
 	"github.com/1day0fmylife/Guardian/internal/config"
 	"github.com/1day0fmylife/Guardian/internal/httpapi"
 	"github.com/1day0fmylife/Guardian/internal/store"
@@ -54,6 +55,10 @@ func main() {
 	}
 	if err := st.SeedRBAC(startupCtx); err != nil {
 		logger.Error("seed RBAC", "error", err)
+		os.Exit(1)
+	}
+	if _, err := adminbootstrap.Ensure(startupCtx, st, cfg.BootstrapAdmin, logger); err != nil {
+		logger.Error("bootstrap administrator", "error", err)
 		os.Exit(1)
 	}
 

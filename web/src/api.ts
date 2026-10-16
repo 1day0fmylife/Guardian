@@ -3,7 +3,7 @@ import axios from 'axios'
 export const sessionTokenKey = 'guardian.session'
 
 export type SetupStatus = { bootstrap_required: boolean }
-export type Principal = { user_id: string; username: string; display_name: string; roles: string[]; permissions: string[] }
+export type Principal = { user_id: string; username: string; display_name: string; roles: string[]; permissions: string[]; must_change_password?: boolean }
 export type Device = { id: string; name: string; device_uuid: string; serial_number?: string; primary_mac?: string; status: string; suspended: boolean; created_at: string; updated_at: string; last_seen_at?: string }
 export type DeviceTelemetry = { id: string; device_id: string; observed_at: string; tunnel_state: string; latest_handshake_at?: string; endpoint?: string; assigned_address?: string; rx_bytes: number; tx_bytes: number; tunnel_uptime_seconds: number; latency_ms?: number; config_revision: number; arlanphone_version?: string; agent_version?: string; wireguard_version?: string; error_code?: string; error_message?: string }
 export type DeviceList = { items: Device[]; total: number; limit: number; offset: number }
@@ -17,7 +17,11 @@ export type IssuedEnrollment = { enrollment: Enrollment; token: string; provisio
 export type EnrollmentCreate = { name: string; profile_id: string; bound_device_uuid: string; bound_serial_number: string; bound_mac: string; ttl_seconds: number }
 export type DeviceCommandType = 'connect' | 'disconnect' | 'apply-config' | 'rotate-key'
 export type DeviceCommand = { id: string; device_id: string; device_name?: string; device_uuid?: string; type: DeviceCommandType; status: string; idempotency_key: string; payload: Record<string, unknown>; result?: Record<string, unknown>; error_message?: string; created_at: string; delivered_at?: string; acknowledged_at?: string; finished_at?: string; expires_at: string }
-export type User = { id: string; username: string; display_name: string; disabled: boolean; roles: string[]; created_at: string; updated_at: string }
+export type User = { id: string; username: string; display_name: string; disabled: boolean; roles: string[]; must_change_password?: boolean; password_changed_at?: string; created_at: string; updated_at: string }
+export type UserStatusFilter = '' | 'active' | 'disabled' | 'password_change'
+export type UserSortKey = 'username' | 'display_name' | 'created_at' | 'updated_at'
+export type UserListParams = { limit: number; offset: number; q?: string; status?: UserStatusFilter; role?: string; sort?: UserSortKey; desc?: boolean }
+export type UserList = { items: User[]; total: number; limit: number; offset: number }
 export type Role = { id: string; name: string; description: string; system: boolean; permissions: string[] }
 export type AuditEvent = { id: string; actor_user_id?: string; action: string; resource_type: string; resource_id?: string; source_ip?: string; request_id?: string; details?: string; created_at: string }
 export type SystemSettings = { values: Record<string, string>; public_url: string; editable: string[] }
@@ -30,7 +34,10 @@ export function clearSession() { sessionStorage.removeItem(sessionTokenKey) }
 export function hasSession() { return Boolean(sessionStorage.getItem(sessionTokenKey)) }
 export async function getSetupStatus() { const { data } = await api.get<SetupStatus>('/setup/status'); return data }
 export async function getMe() { const { data } = await api.get<Principal>('/me'); return data }
-export async function login(username: string, password: string) { const { data } = await api.post<{ token: string; expires_at: string }>('/auth/login', { username, password }); return data }
+export async function login(username: string, password: string) { const { data } = await api.post<{ token: string; expires_at: string; must_change_password?: boolean }>('/auth/login', { username, password }); return data }
+export async function changeOwnPassword(currentPassword: string, newPassword: string) { await api.post('/auth/password', { current_password: currentPassword, new_password: newPassword }) }
+/** Stable machine-readable API error code, if the response carried one. */
+export function apiErrorCode(error: unknown): string | undefined { return axios.isAxiosError(error) ? (error.response?.data as { error?: { code?: string } } | undefined)?.error?.code : undefined }
 export async function bootstrap(username: string, displayName: string, password: string) { const { data } = await api.post<{ token: string; expires_at: string }>('/auth/bootstrap', { username, display_name: displayName, password }); return data }
 export async function logout() { await api.post('/auth/logout') }
 export async function listDevices(limit = 100, offset = 0) { const { data } = await api.get<DeviceList>('/devices', { params: { limit, offset } }); return data }
@@ -47,7 +54,17 @@ export async function listDeviceCommands(deviceId: string, limit = 50, offset = 
 export async function createDeviceCommand(deviceId: string, type: DeviceCommandType) { const { data } = await api.post<DeviceCommand>(`/devices/${encodeURIComponent(deviceId)}/commands`, { type, idempotency_key: `${type}-${crypto.randomUUID()}`, payload: {}, ttl_seconds: 300 }); return data }
 export async function suspendDevice(deviceId: string) { const { data } = await api.post(`/devices/${encodeURIComponent(deviceId)}/suspend`); return data }
 export async function resumeDevice(deviceId: string) { const { data } = await api.post(`/devices/${encodeURIComponent(deviceId)}/resume`); return data }
-export async function listUsers() { const { data } = await api.get<{ items: User[] }>('/users'); return data.items }
+export async function listUsers(params: UserListParams) {
+  const { desc, sort, q, status, role, ...rest } = params
+  const query: Record<string, string | number> = { ...rest }
+  if (q) query.q = q
+  if (status) query.status = status
+  if (role) query.role = role
+  if (sort) query.sort = desc ? `-${sort}` : sort
+  const { data } = await api.get<UserList>('/users', { params: query }); return data
+}
+export async function lockUser(id: string) { const { data } = await api.post<User>(`/users/${encodeURIComponent(id)}/lock`); return data }
+export async function unlockUser(id: string) { const { data } = await api.post<User>(`/users/${encodeURIComponent(id)}/unlock`); return data }
 export async function createUser(input: { username: string; display_name: string; password: string; roles: string[] }) { const { data } = await api.post<User>('/users', input); return data }
 export async function updateUser(id: string, input: { display_name: string; disabled: boolean; roles: string[] }) { const { data } = await api.patch<User>(`/users/${encodeURIComponent(id)}`, input); return data }
 export async function resetUserPassword(id: string, password: string) { await api.post(`/users/${encodeURIComponent(id)}/password`, { password }) }

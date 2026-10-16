@@ -6,8 +6,12 @@ type User struct {
 	DisplayName string   `json:"display_name"`
 	Disabled    bool     `json:"disabled"`
 	Roles       []string `json:"roles,omitempty"`
-	CreatedAt   string   `json:"created_at"`
-	UpdatedAt   string   `json:"updated_at"`
+	// MustChangePassword is set for bootstrap and administrator-issued
+	// passwords; the API refuses everything except password change until cleared.
+	MustChangePassword bool   `json:"must_change_password"`
+	PasswordChangedAt  string `json:"password_changed_at,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
 }
 
 type Principal struct {
@@ -16,8 +20,10 @@ type Principal struct {
 	DisplayName string   `json:"display_name"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
-	SessionID   string   `json:"-"`
-	TokenHash   string   `json:"-"`
+	// MustChangePassword mirrors the user flag at session load time.
+	MustChangePassword bool   `json:"must_change_password"`
+	SessionID          string `json:"-"`
+	TokenHash          string `json:"-"`
 }
 
 type Device struct {

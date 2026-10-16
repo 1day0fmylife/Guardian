@@ -21,11 +21,35 @@ const (
 
 var ErrInvalidPasswordHash = errors.New("invalid password hash")
 
-func HashPassword(password string) (string, error) {
-	if len(password) < 12 {
-		return "", fmt.Errorf("password must contain at least 12 characters")
+const (
+	MinPasswordLength = 12
+	MaxPasswordLength = 1024
+)
+
+// ValidateNewPassword applies the human-account password policy for a
+// replacement password: length bounds, different from the current password
+// and not the username. Messages never echo the password.
+func ValidateNewPassword(password, current, username string) error {
+	if len(password) < MinPasswordLength {
+		return fmt.Errorf("password must contain at least %d characters", MinPasswordLength)
 	}
-	if len(password) > 1024 {
+	if len(password) > MaxPasswordLength {
+		return fmt.Errorf("password is too long")
+	}
+	if subtle.ConstantTimeCompare([]byte(password), []byte(current)) == 1 {
+		return fmt.Errorf("new password must differ from the current password")
+	}
+	if username != "" && strings.EqualFold(strings.TrimSpace(password), strings.TrimSpace(username)) {
+		return fmt.Errorf("password must not equal the username")
+	}
+	return nil
+}
+
+func HashPassword(password string) (string, error) {
+	if len(password) < MinPasswordLength {
+		return "", fmt.Errorf("password must contain at least %d characters", MinPasswordLength)
+	}
+	if len(password) > MaxPasswordLength {
 		return "", fmt.Errorf("password is too long")
 	}
 
