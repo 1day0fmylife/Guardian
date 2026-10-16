@@ -24,7 +24,27 @@ type Config struct {
 	ServiceACLRequired          bool
 	WireGuardReconcileInterval  time.Duration
 	WireGuardReconcileBatchSize int
+	BootstrapAdmin              BootstrapAdmin
 }
+
+// BootstrapAdmin describes the first superadmin created on an empty database.
+// Password is a secret: never log it or include it in errors.
+type BootstrapAdmin struct {
+	Username    string
+	DisplayName string
+	Password    string
+}
+
+// Enabled reports whether deployment configuration requests an initial admin.
+func (b BootstrapAdmin) Enabled() bool { return b.Password != "" }
+
+// String keeps the password out of accidental %v/%s formatting.
+func (b BootstrapAdmin) String() string {
+	return fmt.Sprintf("BootstrapAdmin{Username:%q, Password:<redacted>}", b.Username)
+}
+
+// GoString keeps the password out of %#v formatting.
+func (b BootstrapAdmin) GoString() string { return b.String() }
 
 func Load() (Config, error) {
 	sessionTTL, err := time.ParseDuration(env("GUARDIAN_SESSION_TTL", "12h"))
@@ -65,7 +85,12 @@ func Load() (Config, error) {
 	if err != nil || age < 0 || (age > 0 && (age < 24*time.Hour || age > 3650*24*time.Hour)) {
 		return Config{}, fmt.Errorf("GUARDIAN_TELEMETRY_RETENTION_AGE must be 0s (disabled) or between 24h and 87600h")
 	}
+	bootstrapAdmin, err := loadBootstrapAdmin()
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
+		BootstrapAdmin:              bootstrapAdmin,
 		MetricsListenAddr:           metricsAddr,
 		GatewayProbeAddress:         probe,
 		TelemetryRetentionAge:       age,
@@ -100,4 +125,39 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// loadBootstrapAdmin reads GUARDIAN_BOOTSTRAP_ADMIN_* settings. The password
+// may be supplied inline or via *_FILE (Docker/systemd secrets); not both.
+func loadBootstrapAdmin() (BootstrapAdmin, error) {
+	password := os.Getenv("GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD")
+	passwordFile := strings.TrimSpace(os.Getenv("GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD_FILE"))
+	if password != "" && passwordFile != "" {
+		return BootstrapAdmin{}, fmt.Errorf("set only one of GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD and GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD_FILE")
+	}
+	if passwordFile != "" {
+		raw, err := os.ReadFile(passwordFile)
+		if err != nil {
+			// The path is not secret; the file content is never echoed.
+			return BootstrapAdmin{}, fmt.Errorf("read GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD_FILE: %w", err)
+		}
+		password = strings.TrimRight(string(raw), "\r\n")
+		if password == "" {
+			return BootstrapAdmin{}, fmt.Errorf("GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD_FILE is empty")
+		}
+	}
+	username := strings.ToLower(env("GUARDIAN_BOOTSTRAP_ADMIN_USERNAME", "admin"))
+	if password != "" {
+		if len(username) > 64 || strings.ContainsAny(username, " \t\r\n") {
+			return BootstrapAdmin{}, fmt.Errorf("GUARDIAN_BOOTSTRAP_ADMIN_USERNAME must be 1-64 characters without whitespace")
+		}
+		if len(password) < 12 || len(password) > 1024 {
+			return BootstrapAdmin{}, fmt.Errorf("GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD must contain 12-1024 characters")
+		}
+	}
+	return BootstrapAdmin{
+		Username:    username,
+		DisplayName: env("GUARDIAN_BOOTSTRAP_ADMIN_DISPLAY_NAME", "Administrator"),
+		Password:    password,
+	}, nil
 }

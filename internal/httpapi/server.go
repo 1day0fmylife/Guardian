@@ -60,8 +60,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/device/enroll", s.claimEnrollment)
 
-	mux.HandleFunc("GET /api/v1/me", s.require("", s.me))
-	mux.HandleFunc("POST /api/v1/auth/logout", s.require("", s.logout))
+	// These three stay reachable while a password change is pending so the
+	// WebUI can render the forced-change screen and the user can leave.
+	mux.HandleFunc("GET /api/v1/me", s.requirePendingAllowed(s.me))
+	mux.HandleFunc("POST /api/v1/auth/logout", s.requirePendingAllowed(s.logout))
+	mux.HandleFunc("POST /api/v1/auth/password", s.requirePendingAllowed(s.changeOwnPassword))
 
 	mux.HandleFunc("GET /api/v1/devices", s.require(rbac.DevicesRead, s.listDevices))
 	mux.HandleFunc("POST /api/v1/devices", s.require(rbac.DevicesCreate, s.createDevice))
@@ -196,11 +199,53 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	_ = s.audit(r, user.ID, "auth.login", "user", user.ID, nil)
+	_ = s.audit(r, user.ID, "auth.login", "user", user.ID, map[string]any{"must_change_password": user.MustChangePassword})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token":      token,
-		"expires_at": expiresAt.Format(time.RFC3339Nano),
+		"token":                token,
+		"expires_at":           expiresAt.Format(time.RFC3339Nano),
+		"must_change_password": user.MustChangePassword,
 	})
+}
+
+type passwordChangeRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// changeOwnPassword lets the signed-in user replace their password. It is the
+// only way to clear must_change_password; the current password is required
+// even for a forced change so a hijacked session cannot take over the account.
+func (s *Server) changeOwnPassword(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	var input passwordChangeRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	currentHash, err := s.store.PasswordHashForUser(r.Context(), principal.UserID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if ok, err := security.VerifyPassword(input.CurrentPassword, currentHash); err != nil || !ok {
+		_ = s.audit(r, principal.UserID, "auth.password.change_failed", "user", principal.UserID, map[string]any{"reason": "invalid_current_password"})
+		writeError(w, http.StatusBadRequest, "invalid_current_password", "current password is incorrect")
+		return
+	}
+	if err := security.ValidateNewPassword(input.NewPassword, input.CurrentPassword, principal.Username); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_password", err.Error())
+		return
+	}
+	newHash, err := security.HashPassword(input.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_password", err.Error())
+		return
+	}
+	if err := s.store.ChangeOwnPassword(r.Context(), principal.UserID, newHash, principal.TokenHash); err != nil {
+		writeManagementStoreError(w, err)
+		return
+	}
+	_ = s.audit(r, principal.UserID, "auth.password.change", "user", principal.UserID, map[string]any{"forced": principal.MustChangePassword})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) issueSession(ctx context.Context, userID string) (string, time.Time, error) {
@@ -455,7 +500,20 @@ func (s *Server) claimEnrollment(w http.ResponseWriter, r *http.Request) {
 
 type authedHandler func(http.ResponseWriter, *http.Request, domain.Principal)
 
+// require authenticates the bearer session and checks one permission. Sessions
+// whose user must change their password are refused with
+// password_change_required regardless of permissions.
 func (s *Server) require(permission string, next authedHandler) http.HandlerFunc {
+	return s.authenticate(permission, false, next)
+}
+
+// requirePendingAllowed authenticates without a permission check and lets a
+// pending password change through. Use only for /me, logout and password change.
+func (s *Server) requirePendingAllowed(next authedHandler) http.HandlerFunc {
+	return s.authenticate("", true, next)
+}
+
+func (s *Server) authenticate(permission string, allowPending bool, next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
 		if token == "" {
@@ -467,6 +525,10 @@ func (s *Server) require(permission string, next authedHandler) http.HandlerFunc
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="Guardian"`)
 			writeError(w, http.StatusUnauthorized, "invalid_session", "session is invalid or expired")
+			return
+		}
+		if principal.MustChangePassword && !allowPending {
+			writeError(w, http.StatusForbidden, "password_change_required", "the password must be changed before using the API")
 			return
 		}
 		if permission != "" && !rbac.HasPermission(principal.Permissions, permission) {

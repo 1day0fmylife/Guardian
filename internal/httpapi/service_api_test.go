@@ -115,6 +115,11 @@ func (h *apiHarness) userToken(username, role string) string {
 	h.mustDo(http.MethodPost, "/api/v1/auth/login", "", "", map[string]any{
 		"username": username, "password": "a sufficiently long password for " + username,
 	}, http.StatusOK, &login)
+	// Administrator-created accounts must replace the temporary password first.
+	h.mustDo(http.MethodPost, "/api/v1/auth/password", "", login.Token, map[string]any{
+		"current_password": "a sufficiently long password for " + username,
+		"new_password":     "a replaced personal password for " + username,
+	}, http.StatusNoContent, nil)
 	return login.Token
 }
 

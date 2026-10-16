@@ -126,3 +126,17 @@ func HasPermission(granted []string, required string) bool {
 	}
 	return false
 }
+
+// Covers reports whether granted includes every permission in required.
+func Covers(granted, required []string) bool {
+	set := make(map[string]struct{}, len(granted))
+	for _, permission := range granted {
+		set[permission] = struct{}{}
+	}
+	for _, permission := range required {
+		if _, ok := set[permission]; !ok {
+			return false
+		}
+	}
+	return true
+}

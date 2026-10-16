@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -19,8 +21,11 @@ func (s *Server) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/users", s.require(rbac.UsersRead, s.adminListUsers))
 	mux.Handle("POST /api/v1/users", s.require(rbac.UsersCreate, s.adminCreateUser))
+	mux.Handle("GET /api/v1/users/{id}", s.require(rbac.UsersRead, s.adminGetUser))
 	mux.Handle("PATCH /api/v1/users/{id}", s.require(rbac.UsersUpdate, s.adminUpdateUser))
 	mux.Handle("POST /api/v1/users/{id}/password", s.require(rbac.UsersUpdate, s.adminSetUserPassword))
+	mux.Handle("POST /api/v1/users/{id}/lock", s.require(rbac.UsersUpdate, s.adminLockUser))
+	mux.Handle("POST /api/v1/users/{id}/unlock", s.require(rbac.UsersUpdate, s.adminUnlockUser))
 	mux.Handle("GET /api/v1/roles", s.require(rbac.RolesRead, s.adminListRoles))
 	mux.Handle("POST /api/v1/roles", s.require(rbac.RolesCreate, s.adminCreateRole))
 	mux.Handle("PATCH /api/v1/roles/{id}", s.require(rbac.RolesUpdate, s.adminUpdateRole))
@@ -58,18 +63,96 @@ type adminRoleRequest struct {
 }
 
 func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request, _ domain.Principal) {
-	items, err := s.store.ListUsers(r.Context())
+	limit, offset := pagination(r)
+	values := r.URL.Query()
+	sortKey, desc := strings.TrimPrefix(values.Get("sort"), "-"), strings.HasPrefix(values.Get("sort"), "-")
+	if order := values.Get("order"); order != "" {
+		desc = strings.EqualFold(order, "desc")
+	}
+	items, total, err := s.store.ListUsersPage(r.Context(), store.UserListQuery{
+		Search: values.Get("q"), Status: values.Get("status"), Role: values.Get("role"),
+		Sort: sortKey, Desc: desc, Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid_query", "unsupported user filter or sort")
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
+func (s *Server) adminGetUser(w http.ResponseWriter, r *http.Request, _ domain.Principal) {
+	user, err := s.store.GetUser(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, user)
+}
+
+// errPrivilegeEscalation is returned when an administrator would grant, or
+// act on an account holding, permissions the administrator does not hold.
+var errPrivilegeEscalation = errors.New("privilege escalation")
+
+// authorizeUserManagement enforces permission containment: the actor may only
+// manage accounts whose effective permissions are a subset of its own and may
+// only assign roles whose permissions it holds. This keeps "admin" from
+// resetting a superadmin password or granting itself superadmin, without any
+// role-name checks.
+func (s *Server) authorizeUserManagement(ctx context.Context, actor domain.Principal, targetUserID string, assignRoles []string) error {
+	if targetUserID != "" {
+		current, err := s.store.UserPermissions(ctx, targetUserID)
+		if err != nil {
+			return err
+		}
+		if !rbac.Covers(actor.Permissions, current) {
+			return errPrivilegeEscalation
+		}
+	}
+	if assignRoles != nil {
+		requested, err := s.store.RolesPermissions(ctx, assignRoles)
+		if err != nil {
+			return err
+		}
+		if !rbac.Covers(actor.Permissions, requested) {
+			return errPrivilegeEscalation
+		}
+	}
+	return nil
+}
+
+func writeUserManagementError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errPrivilegeEscalation):
+		writeError(w, http.StatusForbidden, "privilege_escalation", "the target account or requested roles exceed your permissions")
+	case errors.Is(err, store.ErrLastSuperadmin):
+		writeError(w, http.StatusConflict, "last_superadmin", "at least one active superadmin must remain")
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "user_conflict", "username already exists or the request conflicts with current state")
+	default:
+		writeManagementStoreError(w, err)
+	}
 }
 
 func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var input adminUserCreateRequest
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if len(input.Roles) == 0 {
+		writeError(w, http.StatusBadRequest, "roles_required", "at least one role is required")
+		return
+	}
+	if err := s.authorizeUserManagement(r.Context(), principal, "", input.Roles); err != nil {
+		writeUserManagementError(w, err)
+		return
+	}
+	if err := security.ValidateNewPassword(input.Password, "", input.Username); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_password", err.Error())
 		return
 	}
 	passwordHash, err := security.HashPassword(input.Password)
@@ -79,12 +162,13 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, princip
 	}
 	user, err := s.store.CreateAdminUser(r.Context(), store.AdminUserCreate{
 		Username: input.Username, DisplayName: input.DisplayName, PasswordHash: passwordHash, Roles: input.Roles,
+		MustChangePassword: true,
 	})
 	if err != nil {
-		writeManagementStoreError(w, err)
+		writeUserManagementError(w, err)
 		return
 	}
-	_ = s.audit(r, principal.UserID, "user.create", "user", user.ID, map[string]any{"username": user.Username, "roles": user.Roles})
+	_ = s.audit(r, principal.UserID, "user.create", "user", user.ID, map[string]any{"username": user.Username, "roles": user.Roles, "must_change_password": true})
 	writeJSON(w, http.StatusCreated, user)
 }
 
@@ -99,12 +183,54 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, princip
 		writeError(w, http.StatusConflict, "cannot_disable_self", "the current administrator cannot disable its own account")
 		return
 	}
-	user, err := s.store.UpdateAdminUser(r.Context(), id, store.AdminUserUpdate{DisplayName: input.DisplayName, Disabled: input.Disabled, Roles: input.Roles})
+	before, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
-		writeManagementStoreError(w, err)
+		writeStoreError(w, err)
 		return
 	}
-	_ = s.audit(r, principal.UserID, "user.update", "user", user.ID, map[string]any{"disabled": user.Disabled, "roles": user.Roles})
+	if err := s.authorizeUserManagement(r.Context(), principal, id, input.Roles); err != nil {
+		writeUserManagementError(w, err)
+		return
+	}
+	user, err := s.store.UpdateAdminUser(r.Context(), id, store.AdminUserUpdate{DisplayName: input.DisplayName, Disabled: input.Disabled, Roles: input.Roles})
+	if err != nil {
+		writeUserManagementError(w, err)
+		return
+	}
+	_ = s.audit(r, principal.UserID, "user.update", "user", user.ID, map[string]any{
+		"disabled": user.Disabled, "roles": user.Roles, "previous_roles": before.Roles, "previous_disabled": before.Disabled,
+	})
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) adminLockUser(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	s.setUserLocked(w, r, principal, true)
+}
+
+func (s *Server) adminUnlockUser(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	s.setUserLocked(w, r, principal, false)
+}
+
+func (s *Server) setUserLocked(w http.ResponseWriter, r *http.Request, principal domain.Principal, locked bool) {
+	id := r.PathValue("id")
+	if id == principal.UserID && locked {
+		writeError(w, http.StatusConflict, "cannot_disable_self", "the current administrator cannot disable its own account")
+		return
+	}
+	if err := s.authorizeUserManagement(r.Context(), principal, id, nil); err != nil {
+		writeUserManagementError(w, err)
+		return
+	}
+	user, err := s.store.SetUserDisabled(r.Context(), id, locked)
+	if err != nil {
+		writeUserManagementError(w, err)
+		return
+	}
+	action := "user.unlock"
+	if locked {
+		action = "user.lock"
+	}
+	_ = s.audit(r, principal.UserID, action, "user", id, map[string]any{"username": user.Username})
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -114,17 +240,34 @@ func (s *Server) adminSetUserPassword(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	id := r.PathValue("id")
+	if id == principal.UserID {
+		writeError(w, http.StatusConflict, "use_password_change", "use POST /api/v1/auth/password to change your own password")
+		return
+	}
+	target, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := s.authorizeUserManagement(r.Context(), principal, id, nil); err != nil {
+		writeUserManagementError(w, err)
+		return
+	}
+	if err := security.ValidateNewPassword(input.Password, "", target.Username); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_password", err.Error())
+		return
+	}
 	hash, err := security.HashPassword(input.Password)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_password", err.Error())
 		return
 	}
-	id := r.PathValue("id")
 	if err := s.store.SetAdminUserPassword(r.Context(), id, hash); err != nil {
-		writeManagementStoreError(w, err)
+		writeUserManagementError(w, err)
 		return
 	}
-	_ = s.audit(r, principal.UserID, "user.password.reset", "user", id, nil)
+	_ = s.audit(r, principal.UserID, "user.password.reset", "user", id, map[string]any{"must_change_password": true})
 	w.WriteHeader(http.StatusNoContent)
 }
 
