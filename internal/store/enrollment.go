@@ -230,7 +230,7 @@ func (s *Store) ClaimEnrollment(ctx context.Context, token string, input domain.
 		return domain.EnrollmentClaimResult{}, ErrConflict
 	}
 
-	device, err := s.getOrCreateEnrollmentDeviceTx(ctx, tx, input)
+	device, previousStatus, err := s.getOrCreateEnrollmentDeviceTx(ctx, tx, input, boundUUID)
 	if err != nil {
 		return domain.EnrollmentClaimResult{}, err
 	}
@@ -256,39 +256,11 @@ func (s *Store) ClaimEnrollment(ctx context.Context, token string, input domain.
 		return domain.EnrollmentClaimResult{}, fmt.Errorf("load enrollment VPN profile: %w", err)
 	}
 
-	var existingPeer int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE device_id = ? AND revoked_at IS NULL"), device.ID).Scan(&existingPeer); err != nil {
-		return domain.EnrollmentClaimResult{}, fmt.Errorf("check existing peer: %w", err)
-	}
-	if existingPeer != 0 {
-		return domain.EnrollmentClaimResult{}, ErrConflict
-	}
-	var publicKeyExists int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE public_key = ? OR previous_public_key = ?"), input.PublicKey, input.PublicKey).Scan(&publicKeyExists); err != nil {
-		return domain.EnrollmentClaimResult{}, fmt.Errorf("check WireGuard public key: %w", err)
-	}
-	if publicKeyExists != 0 {
-		return domain.EnrollmentClaimResult{}, ErrConflict
-	}
-
-	address, err := s.allocateAddressTx(ctx, tx, poolID, device.ID)
-	if err != nil {
-		return domain.EnrollmentClaimResult{}, err
-	}
-	peerID, err := security.NewID()
+	peerID, address, configRevision, err := s.enrollPeerTx(ctx, tx, device.ID, profileID, poolID, input.PublicKey, previousStatus == "revoked")
 	if err != nil {
 		return domain.EnrollmentClaimResult{}, err
 	}
 	now := nowText()
-	_, err = tx.ExecContext(ctx, s.q(`
-		INSERT INTO wireguard_peers(
-			id, device_id, profile_id, public_key, assigned_address,
-			desired_state, observed_state, config_revision, created_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, 'connected', 'unknown', 1, ?, ?)
-	`), peerID, device.ID, profileID, input.PublicKey, address, now, now)
-	if err != nil {
-		return domain.EnrollmentClaimResult{}, fmt.Errorf("create WireGuard peer: %w", err)
-	}
 
 	_, err = tx.ExecContext(ctx, s.q(`
 		UPDATE enrollment_tokens SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL
@@ -297,12 +269,13 @@ func (s *Store) ClaimEnrollment(ctx context.Context, token string, input domain.
 		return domain.EnrollmentClaimResult{}, fmt.Errorf("consume enrollment: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, s.q(`
-		UPDATE devices SET status = 'active', updated_at = ? WHERE id = ?
+		UPDATE devices SET status = 'active', suspended = 0, updated_at = ? WHERE id = ?
 	`), now, device.ID)
 	if err != nil {
 		return domain.EnrollmentClaimResult{}, fmt.Errorf("activate enrolled device: %w", err)
 	}
 	device.Status = "active"
+	device.Suspended = false
 	device.UpdatedAt = now
 
 	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
@@ -324,43 +297,73 @@ func (s *Store) ClaimEnrollment(ctx context.Context, token string, input domain.
 			AllowedIPs:          splitList(allowedRaw),
 			DNSServers:          splitList(dnsRaw),
 			PersistentKeepalive: keepalive,
-			ConfigRevision:      1,
+			ConfigRevision:      configRevision,
 		},
 	}, nil
 }
 
-func (s *Store) getOrCreateEnrollmentDeviceTx(ctx context.Context, tx *sql.Tx, input domain.EnrollmentClaim) (domain.Device, error) {
-	var d domain.Device
+// Stable enrollment refusal codes for a device record that already exists.
+const (
+	codeDeviceRevocationPending   = "device_revocation_pending"
+	codeDeviceSuspended           = "device_suspended"
+	codeDeviceIdentityMismatch    = "device_identity_mismatch"
+	codeReenrollmentRequiresBound = "reenrollment_requires_bound_enrollment"
+)
+
+// getOrCreateEnrollmentDeviceTx returns the device record for a claim. A
+// revoked device (revocation completed on the gateway) is reactivated in place
+// when the enrollment was issued for exactly this device_uuid by an
+// administrator: an unbound token cannot take over a known UUID, and stored
+// serial/MAC identities must still match. reactivated tells the caller to
+// reuse the retired peer row instead of inserting one.
+func (s *Store) getOrCreateEnrollmentDeviceTx(ctx context.Context, tx *sql.Tx, input domain.EnrollmentClaim, boundUUID string) (d domain.Device, previousStatus string, err error) {
 	var suspended int
 	var lastSeen sql.NullString
-	err := tx.QueryRowContext(ctx, s.q(`
+	query := `
 		SELECT id, name, device_uuid, serial_number, primary_mac, status,
 		       suspended, created_at, updated_at, last_seen_at
 		FROM devices WHERE device_uuid = ?
-	`), input.DeviceUUID).Scan(
+	`
+	if s.dialect == "postgres" {
+		query += " FOR UPDATE"
+	}
+	err = tx.QueryRowContext(ctx, s.q(query), input.DeviceUUID).Scan(
 		&d.ID, &d.Name, &d.DeviceUUID, &d.SerialNumber, &d.PrimaryMAC, &d.Status,
 		&suspended, &d.CreatedAt, &d.UpdatedAt, &lastSeen,
 	)
 	if err == nil {
 		d.Suspended = suspended != 0
-		if d.Suspended {
-			return domain.Device{}, ErrConflict
+		if lastSeen.Valid {
+			d.LastSeenAt = lastSeen.String
+		}
+		switch {
+		case d.Status == "revoking":
+			return domain.Device{}, "", catalogErr(ErrConflict, codeDeviceRevocationPending, "the previous enrollment of this device is still being revoked; retry when revocation completes")
+		case d.Status == "revoked":
+			if boundUUID == "" || boundUUID != d.DeviceUUID {
+				return domain.Device{}, "", catalogErr(ErrConflict, codeReenrollmentRequiresBound, "this device was revoked; issue an enrollment bound to its device UUID to enroll it again")
+			}
+			if d.SerialNumber != "" && input.SerialNumber != d.SerialNumber {
+				return domain.Device{}, "", catalogErr(ErrConflict, codeDeviceIdentityMismatch, "device identity does not match the revoked device record")
+			}
+		case d.Suspended:
+			return domain.Device{}, "", catalogErr(ErrConflict, codeDeviceSuspended, "device is suspended; resume it instead of enrolling again")
 		}
 		if d.SerialNumber != "" && input.SerialNumber != "" && d.SerialNumber != input.SerialNumber {
-			return domain.Device{}, ErrConflict
+			return domain.Device{}, "", catalogErr(ErrConflict, codeDeviceIdentityMismatch, "device identity does not match the device record")
 		}
 		if d.PrimaryMAC != "" && input.PrimaryMAC != "" && d.PrimaryMAC != input.PrimaryMAC {
-			return domain.Device{}, ErrConflict
+			return domain.Device{}, "", catalogErr(ErrConflict, codeDeviceIdentityMismatch, "device identity does not match the device record")
 		}
-		return d, nil
+		return d, d.Status, nil
 	}
 	if err != sql.ErrNoRows {
-		return domain.Device{}, fmt.Errorf("lookup enrollment device: %w", err)
+		return domain.Device{}, "", fmt.Errorf("lookup enrollment device: %w", err)
 	}
 
 	id, err := security.NewID()
 	if err != nil {
-		return domain.Device{}, err
+		return domain.Device{}, "", err
 	}
 	now := nowText()
 	d = domain.Device{
@@ -380,7 +383,7 @@ func (s *Store) getOrCreateEnrollmentDeviceTx(ctx context.Context, tx *sql.Tx, i
 		) VALUES(?, ?, ?, ?, ?, 'pending', 0, ?, ?)
 	`), d.ID, d.Name, d.DeviceUUID, d.SerialNumber, d.PrimaryMAC, now, now)
 	if err != nil {
-		return domain.Device{}, fmt.Errorf("create enrollment device: %w", err)
+		return domain.Device{}, "", fmt.Errorf("create enrollment device: %w", err)
 	}
 
 	identities := [][2]string{{"device_uuid", d.DeviceUUID}}
@@ -393,14 +396,97 @@ func (s *Store) getOrCreateEnrollmentDeviceTx(ctx context.Context, tx *sql.Tx, i
 	for _, identity := range identities {
 		identityID, err := security.NewID()
 		if err != nil {
-			return domain.Device{}, err
+			return domain.Device{}, "", err
 		}
 		if _, err := tx.ExecContext(ctx, s.q(`
 			INSERT INTO device_identities(id, device_id, kind, value, verified, created_at)
 			VALUES(?, ?, ?, ?, 1, ?)
 		`), identityID, d.ID, identity[0], identity[1], now); err != nil {
-			return domain.Device{}, fmt.Errorf("create enrollment identity: %w", err)
+			return domain.Device{}, "", fmt.Errorf("create enrollment identity: %w", err)
 		}
 	}
-	return d, nil
+	return d, "", nil
+}
+
+// enrollPeerTx allocates an address and creates the device's WireGuard peer.
+// For a reactivated (previously revoked) device the retired peer row is
+// reused: wireguard_peers.device_id is unique, and keeping the row keeps the
+// config revision monotonic for the device. Retired public keys can never be
+// enrolled again.
+func (s *Store) enrollPeerTx(ctx context.Context, tx *sql.Tx, deviceID, profileID, poolID, publicKey string, reactivate bool) (peerID, address string, revision int64, err error) {
+	var existingPeer int
+	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE device_id = ? AND revoked_at IS NULL"), deviceID).Scan(&existingPeer); err != nil {
+		return "", "", 0, fmt.Errorf("check existing peer: %w", err)
+	}
+	if existingPeer != 0 {
+		return "", "", 0, ErrConflict
+	}
+	var publicKeyExists int
+	if err := tx.QueryRowContext(ctx, s.q(`
+		SELECT (SELECT COUNT(*) FROM wireguard_peers WHERE public_key = ? OR previous_public_key = ?)
+		     + (SELECT COUNT(*) FROM retired_wireguard_keys WHERE public_key = ?)
+	`), publicKey, publicKey, publicKey).Scan(&publicKeyExists); err != nil {
+		return "", "", 0, fmt.Errorf("check WireGuard public key: %w", err)
+	}
+	if publicKeyExists != 0 {
+		return "", "", 0, ErrConflict
+	}
+	address, err = s.allocateAddressTx(ctx, tx, poolID, deviceID)
+	if err != nil {
+		return "", "", 0, err
+	}
+	now := nowText()
+
+	if reactivate {
+		var oldKey, oldPrevious string
+		var oldRevision int64
+		query := "SELECT id, public_key, previous_public_key, config_revision FROM wireguard_peers WHERE device_id = ?"
+		if s.dialect == "postgres" {
+			query += " FOR UPDATE"
+		}
+		err := tx.QueryRowContext(ctx, s.q(query), deviceID).Scan(&peerID, &oldKey, &oldPrevious, &oldRevision)
+		switch {
+		case err == nil:
+			for _, key := range []string{oldKey, oldPrevious} {
+				if key == "" {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, s.q(`
+					INSERT INTO retired_wireguard_keys(public_key, device_id, retired_at) VALUES(?, ?, ?)
+					ON CONFLICT(public_key) DO NOTHING
+				`), key, deviceID, now); err != nil {
+					return "", "", 0, fmt.Errorf("retire WireGuard key: %w", err)
+				}
+			}
+			revision = oldRevision + 1
+			if _, err := tx.ExecContext(ctx, s.q(`
+				UPDATE wireguard_peers
+				SET profile_id = ?, public_key = ?, previous_public_key = '', assigned_address = ?,
+				    desired_state = 'connected', observed_state = 'unknown', config_revision = ?,
+				    reconcile_state = 'pending', reconcile_error = '', revoked_at = NULL,
+				    service_revocation_revision = 0, updated_at = ?
+				WHERE id = ? AND config_revision = ?
+			`), profileID, publicKey, address, revision, now, peerID, oldRevision); err != nil {
+				return "", "", 0, fmt.Errorf("reactivate WireGuard peer: %w", err)
+			}
+			return peerID, address, revision, nil
+		case err != sql.ErrNoRows:
+			return "", "", 0, fmt.Errorf("load retired peer: %w", err)
+		}
+		// A revoked device without a peer row (never enrolled): insert below.
+	}
+
+	peerID, err = security.NewID()
+	if err != nil {
+		return "", "", 0, err
+	}
+	if _, err := tx.ExecContext(ctx, s.q(`
+		INSERT INTO wireguard_peers(
+			id, device_id, profile_id, public_key, assigned_address,
+			desired_state, observed_state, config_revision, created_at, updated_at
+		) VALUES(?, ?, ?, ?, ?, 'connected', 'unknown', 1, ?, ?)
+	`), peerID, deviceID, profileID, publicKey, address, now, now); err != nil {
+		return "", "", 0, fmt.Errorf("create WireGuard peer: %w", err)
+	}
+	return peerID, address, 1, nil
 }

@@ -14,6 +14,15 @@ chmod 0700 "$state" "$state/wg"
 state=$(cd "$state" && pwd)
 export STATE_DIR=$state
 
+# The WireGuard server key and the CA live here. On tmpfs a host reboot
+# replaces them and every enrolled phone loses its tunnel and trust anchor.
+fstype=$(stat -f -c %T "$state" 2>/dev/null || echo unknown)
+if [[ $fstype == tmpfs || $fstype == ramfs ]] && [[ ${ARLAN_ALLOW_VOLATILE_STATE:-0} != 1 ]]; then
+    echo "state directory $state is on $fstype: keys and CA would not survive a reboot." >&2
+    echo "Use a persistent path (or ARLAN_ALLOW_VOLATILE_STATE=1 for a throwaway test)." >&2
+    exit 1
+fi
+
 for tool in docker openssl; do
     command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
@@ -42,6 +51,11 @@ if [[ ! -f "$state/wg/private.key" ]]; then
     chmod 0644 "$state/wg/private.key"
 fi
 "$here/scripts/gen-pki.sh" "$state" "${DAV_FQDN},${FLEET_FQDN},${ACS_FQDN}" "${PKI_STUB_NAMES:-}"
+# Trust bundle served to devices: the current CA until a CA rollover adds the
+# next CA and its cross-certificate (see docs/profile-rotation-and-reenrollment.md).
+mkdir -p "$state/trust"
+chmod 0755 "$state/trust"
+[[ -s "$state/trust/bundle.pem" ]] || install -m 0644 "$state/pki/ca.pem" "$state/trust/bundle.pem"
 
 compose=(docker compose --env-file "$envfile" -f "$here/compose.yaml")
 [[ -n "${COMPOSE_EXTRA_FILE:-}" ]] && compose+=(-f "$COMPOSE_EXTRA_FILE")

@@ -69,6 +69,7 @@ func main() {
 		}
 	}
 	api := httpapi.New(st, cfg.PublicURL, cfg.SessionTTL)
+	api.SetDeviceTrustBundleFile(cfg.DeviceTrustBundleFile)
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           api.WebSocketHandler(api.AdminHandler()),

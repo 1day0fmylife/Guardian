@@ -95,7 +95,7 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 		return domain.ManagedEnrollmentClaimResult{}, ErrConflict
 	}
 
-	device, err := s.getOrCreateEnrollmentDeviceTx(ctx, tx, input)
+	device, previousStatus, err := s.getOrCreateEnrollmentDeviceTx(ctx, tx, input, boundUUID)
 	if err != nil {
 		return domain.ManagedEnrollmentClaimResult{}, err
 	}
@@ -119,38 +119,11 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("load enrollment VPN profile: %w", err)
 	}
 
-	var existingPeer int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE device_id = ? AND revoked_at IS NULL"), device.ID).Scan(&existingPeer); err != nil {
-		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("check existing peer: %w", err)
-	}
-	if existingPeer != 0 {
-		return domain.ManagedEnrollmentClaimResult{}, ErrConflict
-	}
-	var publicKeyExists int
-	if err := tx.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM wireguard_peers WHERE public_key = ? OR previous_public_key = ?"), input.PublicKey, input.PublicKey).Scan(&publicKeyExists); err != nil {
-		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("check WireGuard public key: %w", err)
-	}
-	if publicKeyExists != 0 {
-		return domain.ManagedEnrollmentClaimResult{}, ErrConflict
-	}
-
-	address, err := s.allocateAddressTx(ctx, tx, poolID, device.ID)
-	if err != nil {
-		return domain.ManagedEnrollmentClaimResult{}, err
-	}
-	peerID, err := security.NewID()
+	peerID, address, configRevision, err := s.enrollPeerTx(ctx, tx, device.ID, profileID, poolID, input.PublicKey, previousStatus == "revoked")
 	if err != nil {
 		return domain.ManagedEnrollmentClaimResult{}, err
 	}
 	now := nowText()
-	if _, err := tx.ExecContext(ctx, s.q(`
-		INSERT INTO wireguard_peers(
-			id, device_id, profile_id, public_key, assigned_address,
-			desired_state, observed_state, config_revision, created_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, 'connected', 'unknown', 1, ?, ?)
-	`), peerID, device.ID, profileID, input.PublicKey, address, now, now); err != nil {
-		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("create WireGuard peer: %w", err)
-	}
 
 	var credential domain.DeviceCredentialIssued
 	if input.DeviceCredentialHash != "" {
@@ -167,11 +140,12 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("consume enrollment: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, s.q(`
-		UPDATE devices SET status = 'active', updated_at = ? WHERE id = ?
+		UPDATE devices SET status = 'active', suspended = 0, updated_at = ? WHERE id = ?
 	`), now, device.ID); err != nil {
 		return domain.ManagedEnrollmentClaimResult{}, fmt.Errorf("activate enrolled device: %w", err)
 	}
 	device.Status = "active"
+	device.Suspended = false
 	device.UpdatedAt = now
 
 	if _, err := s.bumpServicePolicyRevision(ctx, tx); err != nil {
@@ -193,8 +167,10 @@ func (s *Store) ClaimManagedEnrollment(ctx context.Context, token string, input 
 			AllowedIPs:          splitList(allowedRaw),
 			DNSServers:          splitList(dnsRaw),
 			PersistentKeepalive: keepalive,
-			ConfigRevision:      1,
+			ConfigRevision:      configRevision,
 		},
-		Credential: credential,
+		Credential:     credential,
+		Reactivated:    previousStatus == "revoked",
+		PreviousStatus: previousStatus,
 	}, nil
 }

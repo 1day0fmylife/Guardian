@@ -35,6 +35,7 @@ func (s *Server) ManagementHandler() http.Handler {
 	mux.Handle("POST /api/v1/device/telemetry", wrap(s.requireDevice(false, s.deviceTelemetry)))
 	mux.Handle("POST /api/v1/device/credential/rotate", wrap(s.requireDevice(true, s.deviceRotateCredential)))
 	mux.Handle("POST /api/v1/device/wireguard/rotate-key", wrap(s.requireDevice(true, s.deviceRotateWireGuardKey)))
+	mux.Handle("GET /api/v1/device/trust-bundle", wrap(s.requireDevice(false, s.deviceTrustBundle)))
 
 	mux.Handle("GET /api/v1/devices/{id}/commands", wrap(s.require(rbac.CommandsRead, s.adminListDeviceCommands)))
 	mux.Handle("POST /api/v1/devices/{id}/commands", wrap(s.require(rbac.CommandsCreate, s.adminCreateDeviceCommand)))
@@ -102,7 +103,10 @@ func (s *Server) claimManagedEnrollment(w http.ResponseWriter, r *http.Request) 
 	}
 	result, err := s.store.ClaimManagedEnrollment(r.Context(), token, input)
 	if err != nil {
+		var coded *store.ServiceCatalogError
 		switch {
+		case errors.As(err, &coded):
+			writeCatalogError(w, err)
 		case errors.Is(err, store.ErrInvalid), errors.Is(err, security.ErrInvalidWireGuardPublicKey):
 			writeError(w, http.StatusBadRequest, "invalid_enrollment_request", "enrollment request is invalid")
 		case errors.Is(err, store.ErrNotFound):
@@ -114,15 +118,37 @@ func (s *Server) claimManagedEnrollment(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
-	_ = s.audit(r, "", "enrollment.claim", "device", result.Device.ID, map[string]any{
+	details := map[string]any{
 		"device_uuid": result.Device.DeviceUUID,
 		"profile_id":  result.Config.ProfileID,
-	})
+	}
+	if result.Reactivated {
+		details["reactivated"] = true
+		details["previous_status"] = result.PreviousStatus
+		details["config_revision"] = result.Config.ConfigRevision
+	}
+	_ = s.audit(r, "", "enrollment.claim", "device", result.Device.ID, details)
 	writeJSON(w, http.StatusCreated, result)
 }
 
-func (s *Server) deviceMe(w http.ResponseWriter, _ *http.Request, principal domain.DevicePrincipal) {
-	writeJSON(w, http.StatusOK, principal)
+// deviceMe also returns the config revision the device should run, so an
+// agent that missed an apply-config command (offline longer than its TTL)
+// still notices a profile change and fetches the new configuration.
+func (s *Server) deviceMe(w http.ResponseWriter, r *http.Request, principal domain.DevicePrincipal) {
+	response := struct {
+		domain.DevicePrincipal
+		ConfigRevision int64 `json:"config_revision,omitempty"`
+	}{DevicePrincipal: principal}
+	if !principal.Suspended && principal.Status == "active" {
+		revision, err := s.store.DeviceConfigRevision(r.Context(), principal.DeviceID)
+		if err != nil {
+			w.Header().Set("Retry-After", "5")
+			writeError(w, http.StatusServiceUnavailable, "device_state_unavailable", "device state is temporarily unavailable")
+			return
+		}
+		response.ConfigRevision = revision
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) deviceConfig(w http.ResponseWriter, r *http.Request, principal domain.DevicePrincipal) {

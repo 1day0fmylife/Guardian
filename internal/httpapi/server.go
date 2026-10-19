@@ -28,6 +28,7 @@ const (
 )
 
 type Server struct {
+	trustBundleFile   string
 	store             *store.Store
 	metrics           *observability.Metrics
 	startedAt         time.Time
@@ -77,6 +78,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/vpn-profiles", s.require(rbac.ProfilesRead, s.listVPNProfiles))
 	mux.HandleFunc("POST /api/v1/vpn-profiles", s.require(rbac.ProfilesCreate, s.createVPNProfile))
+	mux.HandleFunc("GET /api/v1/vpn-profiles/{id}", s.require(rbac.ProfilesRead, s.getVPNProfile))
+	mux.HandleFunc("PUT /api/v1/vpn-profiles/{id}", s.require(rbac.ProfilesUpdate, s.updateVPNProfile))
+	mux.HandleFunc("GET /api/v1/vpn-profiles/{id}/rollout", s.require(rbac.ProfilesRead, s.vpnProfileRollout))
 
 	mux.HandleFunc("GET /api/v1/enrollments", s.require(rbac.EnrollmentRead, s.listEnrollments))
 	mux.HandleFunc("POST /api/v1/enrollments", s.require(rbac.EnrollmentCreate, s.createEnrollment))
@@ -401,6 +405,10 @@ func (s *Server) createVPNProfile(w http.ResponseWriter, r *http.Request, princi
 		PersistentKeepalive: input.PersistentKeepalive, AddressPoolID: input.AddressPoolID,
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid_profile", strings.TrimPrefix(err.Error(), store.ErrInvalid.Error()+": "))
+			return
+		}
 		writeStoreError(w, err)
 		return
 	}
@@ -481,7 +489,10 @@ func (s *Server) claimEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.store.ClaimEnrollment(r.Context(), token, input)
 	if err != nil {
+		var coded *store.ServiceCatalogError
 		switch {
+		case errors.As(err, &coded):
+			writeCatalogError(w, err)
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusUnauthorized, "invalid_enrollment", "enrollment token is invalid")
 		case errors.Is(err, store.ErrConflict):
