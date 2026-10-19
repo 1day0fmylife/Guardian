@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -103,6 +104,7 @@ func (s *Server) claimManagedEnrollment(w http.ResponseWriter, r *http.Request) 
 	}
 	result, err := s.store.ClaimManagedEnrollment(r.Context(), token, input)
 	if err != nil {
+		logEnrollmentRefusal(r, input.DeviceUUID, err)
 		var coded *store.ServiceCatalogError
 		switch {
 		case errors.As(err, &coded):
@@ -379,4 +381,20 @@ func writeManagementStoreError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeStoreError(w, err)
+}
+
+// logEnrollmentRefusal records why a claim failed. The store error never
+// contains the enrollment token, credential hash or key material; the device
+// UUID is an identifier, not a secret.
+func logEnrollmentRefusal(r *http.Request, deviceUUID string, err error) {
+	var coded *store.ServiceCatalogError
+	switch {
+	case errors.As(err, &coded):
+		slog.WarnContext(r.Context(), "enrollment claim refused", "code", coded.Code, "device_uuid", deviceUUID, "request_id", requestID(r))
+	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrInvalid),
+		errors.Is(err, security.ErrInvalidWireGuardPublicKey):
+		slog.WarnContext(r.Context(), "enrollment claim refused", "reason", err.Error(), "device_uuid", deviceUUID, "request_id", requestID(r))
+	default:
+		slog.ErrorContext(r.Context(), "enrollment claim failed", "error", err.Error(), "device_uuid", deviceUUID, "request_id", requestID(r))
+	}
 }

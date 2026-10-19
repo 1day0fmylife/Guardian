@@ -489,6 +489,7 @@ func (s *Server) claimEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.store.ClaimEnrollment(r.Context(), token, input)
 	if err != nil {
+		logEnrollmentRefusal(r, input.DeviceUUID, err)
 		var coded *store.ServiceCatalogError
 		switch {
 		case errors.As(err, &coded):

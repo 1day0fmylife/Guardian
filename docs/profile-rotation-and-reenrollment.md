@@ -74,12 +74,18 @@ with the same `device_uuid`:
 | `revoked` | bound, other serial | `409 device_identity_mismatch` |
 | `revoking` | any | `409 device_revocation_pending` |
 | `suspended` | any | `409 device_suspended` (use resume) |
+| new record | serial/MAC/UUID identity owned by another record | `409 device_identity_conflict` |
 
 Reactivation keeps the device record (`device_id`, audit history, scope
 memberships), reuses its peer row with a higher `config_revision`, allocates a
 new address, issues a new device credential and records the old WireGuard keys
 in `retired_wireguard_keys`, so they can never be enrolled again. The audit event
 `enrollment.claim` carries `reactivated: true` and `previous_status`.
+`devices` and `device_identities` are handled together: reactivation keeps the
+existing identity rows, and an identity still owned by another record (a serial
+moved to a new UUID, or a record edited by hand) is refused with a stable code
+instead of a unique-constraint `500`. Every refused or failed claim is logged
+with its code, device UUID and request id (never the token or key material).
 
 ## Persistence
 

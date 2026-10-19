@@ -308,6 +308,7 @@ const (
 	codeDeviceSuspended           = "device_suspended"
 	codeDeviceIdentityMismatch    = "device_identity_mismatch"
 	codeReenrollmentRequiresBound = "reenrollment_requires_bound_enrollment"
+	codeDeviceIdentityConflict    = "device_identity_conflict"
 )
 
 // getOrCreateEnrollmentDeviceTx returns the device record for a claim. A
@@ -394,6 +395,20 @@ func (s *Store) getOrCreateEnrollmentDeviceTx(ctx context.Context, tx *sql.Tx, i
 		identities = append(identities, [2]string{"mac", d.PrimaryMAC})
 	}
 	for _, identity := range identities {
+		// device_identities(kind, value) is unique. An identity still owned by
+		// another device record (serial/MAC moved to a new UUID, or a record
+		// edited by hand) is a stable conflict, never a driver error.
+		var owner string
+		err := tx.QueryRowContext(ctx, s.q(`
+			SELECT device_id FROM device_identities WHERE kind = ? AND value = ?
+		`), identity[0], identity[1]).Scan(&owner)
+		if err == nil {
+			return domain.Device{}, "", catalogErr(ErrConflict, codeDeviceIdentityConflict,
+				fmt.Sprintf("the %s of this device already belongs to another device record", identity[0]))
+		}
+		if err != sql.ErrNoRows {
+			return domain.Device{}, "", fmt.Errorf("check enrollment identity: %w", err)
+		}
 		identityID, err := security.NewID()
 		if err != nil {
 			return domain.Device{}, "", err

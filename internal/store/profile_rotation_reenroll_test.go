@@ -276,6 +276,31 @@ func TestRevokedDeviceReenrollsWithBoundEnrollment(t *testing.T) {
 		if !found {
 			t.Fatalf("reactivated peer is not pending on the gateway: %+v", pending)
 		}
+		// device_identities stays consistent with devices: one row per kind, all
+		// owned by the reactivated record.
+		rows, err := st.DB().QueryContext(ctx, sQuery(st, "SELECT kind, value, device_id FROM device_identities WHERE value IN (?, ?) ORDER BY kind"), uuid, "SN-1")
+		if err != nil {
+			t.Fatalf("load identities: %v", err)
+		}
+		var kinds []string
+		for rows.Next() {
+			var kind, value, owner string
+			if err := rows.Scan(&kind, &value, &owner); err != nil {
+				t.Fatal(err)
+			}
+			if owner != first.Device.ID {
+				t.Fatalf("identity %s=%s owned by %s, want %s", kind, value, owner, first.Device.ID)
+			}
+			kinds = append(kinds, kind)
+		}
+		rows.Close()
+		if fmt.Sprint(kinds) != "[device_uuid serial_number]" {
+			t.Fatalf("identity rows = %v", kinds)
+		}
+		var deviceRows int
+		if err := st.DB().QueryRowContext(ctx, sQuery(st, "SELECT COUNT(*) FROM devices WHERE device_uuid = ?"), uuid).Scan(&deviceRows); err != nil || deviceRows != 1 {
+			t.Fatalf("device rows for uuid = %d, %v", deviceRows, err)
+		}
 		// Re-using the consumed token is still refused.
 		if _, err := f.enroll(t, st, uuid, "SN-1", uuid, 65); !errors.Is(err, ErrConflict) {
 			t.Fatalf("enroll an active device err = %v", err)
@@ -309,6 +334,32 @@ func TestDeviceKeyRotationRetrySurvivesProfileChange(t *testing.T) {
 		}
 		if _, err := st.RotateDeviceWireGuardPublicKey(ctx, claim.Device.ID, testWGKey(73), 9); !errors.Is(err, ErrConflict) {
 			t.Fatalf("future revision err = %v", err)
+		}
+	})
+}
+
+// Identities owned by another record (serial reused under a new UUID, or a
+// device row edited by hand as on the lab stand) give a stable 409 code, not
+// a unique-constraint driver error.
+func TestEnrollmentIdentityConflictsAreStable(t *testing.T) {
+	forEachDialect(t, func(t *testing.T, st *Store) {
+		ctx := context.Background()
+		f := newRotationFixture(t, st, "identity-conflict", "10.143.0.0/29", 81)
+		uuid := fmt.Sprintf("identity-%d", time.Now().UnixNano())
+		first, err := f.enroll(t, st, uuid, "SN-X", "", 82)
+		if err != nil {
+			t.Fatalf("enroll: %v", err)
+		}
+		var coded *ServiceCatalogError
+		if _, err := f.enroll(t, st, uuid+"-other", "SN-X", "", 83); !errors.As(err, &coded) || coded.Code != "device_identity_conflict" {
+			t.Fatalf("serial reused under a new UUID: %v", err)
+		}
+		// Hand edit: the device row gets another UUID, device_identities keeps the old one.
+		if _, err := st.DB().ExecContext(ctx, sQuery(st, "UPDATE devices SET device_uuid = ? WHERE id = ?"), uuid+"-renamed", first.Device.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.enroll(t, st, uuid, "", "", 84); !errors.As(err, &coded) || coded.Code != "device_identity_conflict" {
+			t.Fatalf("enroll after hand-edited UUID: %v", err)
 		}
 	})
 }
