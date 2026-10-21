@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/1day0fmylife/Guardian/internal/domain"
@@ -135,36 +138,25 @@ type VPNProfileCreate struct {
 
 func (s *Store) CreateVPNProfile(ctx context.Context, input VPNProfileCreate) (domain.VPNProfile, error) {
 	input.Name = strings.TrimSpace(input.Name)
-	input.Endpoint = strings.TrimSpace(input.Endpoint)
 	input.AddressPoolID = strings.TrimSpace(input.AddressPoolID)
-	if input.Name == "" || input.Endpoint == "" || input.AddressPoolID == "" {
+	if input.Name == "" || strings.TrimSpace(input.Endpoint) == "" || input.AddressPoolID == "" {
 		return domain.VPNProfile{}, fmt.Errorf("name, endpoint and address_pool_id are required")
 	}
-	if err := security.ValidateWireGuardPublicKey(strings.TrimSpace(input.ServerPublicKey)); err != nil {
-		return domain.VPNProfile{}, err
-	}
-	input.ServerPublicKey = strings.TrimSpace(input.ServerPublicKey)
 	if input.PersistentKeepalive == 0 {
 		input.PersistentKeepalive = 25
 	}
-	if input.PersistentKeepalive < 0 || input.PersistentKeepalive > 65535 {
-		return domain.VPNProfile{}, fmt.Errorf("invalid persistent keepalive")
+	if len(normalizeStringList(input.AllowedIPs)) == 0 {
+		input.AllowedIPs = []string{"0.0.0.0/0"}
 	}
-	allowed := normalizeStringList(input.AllowedIPs)
-	if len(allowed) == 0 {
-		allowed = []string{"0.0.0.0/0"}
+	fields := vpnProfileFields{
+		ServerPublicKey: input.ServerPublicKey, Endpoint: input.Endpoint, AllowedIPs: input.AllowedIPs,
+		DNSServers: input.DNSServers, PersistentKeepalive: input.PersistentKeepalive,
 	}
-	for _, value := range allowed {
-		if _, err := netip.ParsePrefix(value); err != nil {
-			return domain.VPNProfile{}, fmt.Errorf("invalid allowed IP %q", value)
-		}
+	if err := fields.normalize(); err != nil {
+		return domain.VPNProfile{}, err
 	}
-	dns := normalizeStringList(input.DNSServers)
-	for _, value := range dns {
-		if _, err := netip.ParseAddr(value); err != nil {
-			return domain.VPNProfile{}, fmt.Errorf("invalid DNS server %q", value)
-		}
-	}
+	input.ServerPublicKey, input.Endpoint = fields.ServerPublicKey, fields.Endpoint
+	allowed, dns := fields.AllowedIPs, fields.DNSServers
 
 	var poolExists int
 	if err := s.db.QueryRowContext(ctx, s.q("SELECT COUNT(*) FROM address_pools WHERE id = ?"), input.AddressPoolID).Scan(&poolExists); err != nil {
@@ -192,36 +184,86 @@ func (s *Store) CreateVPNProfile(ctx context.Context, input VPNProfileCreate) (d
 	return domain.VPNProfile{
 		ID: id, Name: input.Name, ServerPublicKey: input.ServerPublicKey, Endpoint: input.Endpoint,
 		AllowedIPs: allowed, DNSServers: dns, PersistentKeepalive: input.PersistentKeepalive,
-		AddressPoolID: input.AddressPoolID, CreatedAt: now, UpdatedAt: now,
+		AddressPoolID: input.AddressPoolID, Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
-func (s *Store) GetVPNProfile(ctx context.Context, id string) (domain.VPNProfile, error) {
+const vpnProfileColumns = `id, name, server_public_key, endpoint, allowed_ips, dns_servers,
+		       persistent_keepalive, address_pool_id, revision, previous_server_public_key,
+		       previous_endpoint, previous_valid_until, created_at, updated_at`
+
+func scanVPNProfile(scan scanFunc) (domain.VPNProfile, error) {
 	var p domain.VPNProfile
 	var allowed, dns string
-	err := s.db.QueryRowContext(ctx, s.q(`
-		SELECT id, name, server_public_key, endpoint, allowed_ips, dns_servers,
-		       persistent_keepalive, address_pool_id, created_at, updated_at
-		FROM vpn_profiles WHERE id = ?
-	`), id).Scan(&p.ID, &p.Name, &p.ServerPublicKey, &p.Endpoint, &allowed, &dns,
-		&p.PersistentKeepalive, &p.AddressPoolID, &p.CreatedAt, &p.UpdatedAt)
+	var validUntil sql.NullString
+	if err := scan(&p.ID, &p.Name, &p.ServerPublicKey, &p.Endpoint, &allowed, &dns,
+		&p.PersistentKeepalive, &p.AddressPoolID, &p.Revision, &p.PreviousServerPublicKey,
+		&p.PreviousEndpoint, &validUntil, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		return domain.VPNProfile{}, err
+	}
+	p.AllowedIPs = splitList(allowed)
+	p.DNSServers = splitList(dns)
+	if validUntil.Valid {
+		p.PreviousValidUntil = validUntil.String
+	}
+	return p, nil
+}
+
+// vpnProfileFields are the profile values every device applies.
+type vpnProfileFields struct {
+	ServerPublicKey     string
+	Endpoint            string
+	AllowedIPs          []string
+	DNSServers          []string
+	PersistentKeepalive int
+}
+
+func (f *vpnProfileFields) normalize() error {
+	f.ServerPublicKey = strings.TrimSpace(f.ServerPublicKey)
+	f.Endpoint = strings.TrimSpace(f.Endpoint)
+	if err := security.ValidateWireGuardPublicKey(f.ServerPublicKey); err != nil {
+		return err
+	}
+	if host, port, err := net.SplitHostPort(f.Endpoint); err != nil || host == "" || port == "" {
+		return invalidf("endpoint must be host:port")
+	} else if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return invalidf("endpoint port is invalid")
+	}
+	if f.PersistentKeepalive < 0 || f.PersistentKeepalive > 65535 {
+		return invalidf("invalid persistent keepalive")
+	}
+	f.AllowedIPs = normalizeStringList(f.AllowedIPs)
+	if len(f.AllowedIPs) == 0 {
+		return invalidf("allowed_ips must not be empty")
+	}
+	for _, value := range f.AllowedIPs {
+		if _, err := netip.ParsePrefix(value); err != nil {
+			return invalidf("invalid allowed IP %q", value)
+		}
+	}
+	f.DNSServers = normalizeStringList(f.DNSServers)
+	for _, value := range f.DNSServers {
+		if _, err := netip.ParseAddr(value); err != nil {
+			return invalidf("invalid DNS server %q", value)
+		}
+	}
+	return nil
+}
+
+func (s *Store) GetVPNProfile(ctx context.Context, id string) (domain.VPNProfile, error) {
+	row := s.db.QueryRowContext(ctx, s.q("SELECT "+vpnProfileColumns+" FROM vpn_profiles WHERE id = ?"), id)
+	p, err := scanVPNProfile(row.Scan)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return domain.VPNProfile{}, ErrNotFound
 		}
 		return domain.VPNProfile{}, fmt.Errorf("get VPN profile: %w", err)
 	}
-	p.AllowedIPs = splitList(allowed)
-	p.DNSServers = splitList(dns)
 	return p, nil
 }
 
 func (s *Store) ListVPNProfiles(ctx context.Context) ([]domain.VPNProfile, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, server_public_key, endpoint, allowed_ips, dns_servers,
-		       persistent_keepalive, address_pool_id, created_at, updated_at
-		FROM vpn_profiles ORDER BY name
-	`)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+vpnProfileColumns+" FROM vpn_profiles ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("list VPN profiles: %w", err)
 	}
@@ -229,14 +271,10 @@ func (s *Store) ListVPNProfiles(ctx context.Context) ([]domain.VPNProfile, error
 
 	var profiles []domain.VPNProfile
 	for rows.Next() {
-		var p domain.VPNProfile
-		var allowed, dns string
-		if err := rows.Scan(&p.ID, &p.Name, &p.ServerPublicKey, &p.Endpoint, &allowed, &dns,
-			&p.PersistentKeepalive, &p.AddressPoolID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanVPNProfile(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("scan VPN profile: %w", err)
 		}
-		p.AllowedIPs = splitList(allowed)
-		p.DNSServers = splitList(dns)
 		profiles = append(profiles, p)
 	}
 	return profiles, rows.Err()

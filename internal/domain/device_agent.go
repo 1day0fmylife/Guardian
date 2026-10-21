@@ -28,6 +28,9 @@ type ManagedEnrollmentClaimResult struct {
 	Device     Device                 `json:"device"`
 	Config     ManagedWireGuardConfig `json:"wireguard"`
 	Credential DeviceCredentialIssued `json:"device_credential"`
+	// Reactivated is true when a revoked device record was enrolled again.
+	Reactivated    bool   `json:"reactivated,omitempty"`
+	PreviousStatus string `json:"-"`
 }
 
 type DeviceCommand struct {

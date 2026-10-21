@@ -50,8 +50,11 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 	// the rotation. Permit one exact idempotent retry using the same public key
 	// and the previous revision so a reboot/network failure cannot strand the
 	// device on an unrecoverable key transition.
+	// A profile change may have raised the revision again since the rotation
+	// committed; the key itself is already the device's, so any newer
+	// revision still answers the retry with the current configuration.
 	if currentKey == publicKey {
-		if currentRevision != expectedRevision && currentRevision != expectedRevision+1 {
+		if currentRevision < expectedRevision {
 			return domain.ManagedWireGuardConfig{}, ErrConflict
 		}
 		if err := tx.Commit(); err != nil {
@@ -65,9 +68,10 @@ func (s *Store) RotateDeviceWireGuardPublicKey(ctx context.Context, deviceID, pu
 
 	var keyInUse int
 	if err := tx.QueryRowContext(ctx, s.q(`
-		SELECT COUNT(*) FROM wireguard_peers
-		WHERE (public_key = ? OR previous_public_key = ?) AND id <> ?
-	`), publicKey, publicKey, peerID).Scan(&keyInUse); err != nil {
+		SELECT (SELECT COUNT(*) FROM wireguard_peers
+		        WHERE (public_key = ? OR previous_public_key = ?) AND id <> ?)
+		     + (SELECT COUNT(*) FROM retired_wireguard_keys WHERE public_key = ?)
+	`), publicKey, publicKey, peerID, publicKey).Scan(&keyInUse); err != nil {
 		return domain.ManagedWireGuardConfig{}, fmt.Errorf("check WireGuard public key uniqueness: %w", err)
 	}
 	if keyInUse != 0 {

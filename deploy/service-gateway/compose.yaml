@@ -49,6 +49,11 @@ services:
       GUARDIAN_WIREGUARD_INTERFACE: ""
       GUARDIAN_BOOTSTRAP_ADMIN_USERNAME: ${GUARDIAN_BOOTSTRAP_ADMIN_USERNAME:-admin}
       GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD: ${GUARDIAN_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # Service CA anchors + rollover cross-certificates for devices
+      # (GET /api/v1/device/trust-bundle). Public material only.
+      GUARDIAN_DEVICE_TRUST_BUNDLE_FILE: /trust/bundle.pem
+    volumes:
+      - ${STATE_DIR:-./state}/trust:/trust:ro
     depends_on:
       postgres:
         condition: service_healthy

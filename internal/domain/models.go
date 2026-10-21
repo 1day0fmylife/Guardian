@@ -65,8 +65,16 @@ type VPNProfile struct {
 	DNSServers          []string `json:"dns_servers,omitempty"`
 	PersistentKeepalive int      `json:"persistent_keepalive"`
 	AddressPoolID       string   `json:"address_pool_id"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
+	// Revision increases with every change that devices must apply.
+	Revision int64 `json:"revision"`
+	// Previous* keep the server key/endpoint replaced by the last rotation
+	// until PreviousValidUntil, so an operator can retire the old gateway key
+	// only after the devices have applied the new configuration.
+	PreviousServerPublicKey string `json:"previous_server_public_key,omitempty"`
+	PreviousEndpoint        string `json:"previous_endpoint,omitempty"`
+	PreviousValidUntil      string `json:"previous_valid_until,omitempty"`
+	CreatedAt               string `json:"created_at"`
+	UpdatedAt               string `json:"updated_at"`
 }
 
 type Enrollment struct {

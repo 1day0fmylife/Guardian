@@ -25,6 +25,9 @@ type Config struct {
 	WireGuardReconcileInterval  time.Duration
 	WireGuardReconcileBatchSize int
 	BootstrapAdmin              BootstrapAdmin
+	// DeviceTrustBundleFile is served to devices as the service CA trust
+	// bundle (CA rollover with cross-certificates). Empty: no bundle.
+	DeviceTrustBundleFile string
 }
 
 // BootstrapAdmin describes the first superadmin created on an empty database.
@@ -99,6 +102,7 @@ func Load() (Config, error) {
 		DatabaseURL:                 env("GUARDIAN_DATABASE_URL", "sqlite://./data/guardian.db"),
 		RedisURL:                    strings.TrimSpace(os.Getenv("GUARDIAN_REDIS_URL")),
 		PublicURL:                   strings.TrimRight(env("GUARDIAN_PUBLIC_URL", "http://localhost"), "/"),
+		DeviceTrustBundleFile:       strings.TrimSpace(os.Getenv("GUARDIAN_DEVICE_TRUST_BUNDLE_FILE")),
 		Environment:                 env("GUARDIAN_ENV", "development"),
 		SessionTTL:                  sessionTTL,
 		WireGuardInterface:          strings.TrimSpace(os.Getenv("GUARDIAN_WIREGUARD_INTERFACE")),
