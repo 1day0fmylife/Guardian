@@ -59,7 +59,7 @@ export function DevicesPage() {
     <section className="page-stack">
       <div className="section-heading">
         <div><div className="eyebrow">{t('Inventory')}</div><h2>{t('Managed devices')}</h2><p>{t('ArlanPhone endpoints enrolled in Guardian.')}</p></div>
-        <span className="count-chip">{t('Total: {count}', { count: query.data.total })}</span>
+        <div className="heading-actions"><span className="count-chip">{t('Total: {count}', { count: query.data.total })}</span><Link className="primary-button link-button" to="/clients/new"><span className="material-symbols-rounded" aria-hidden="true">person_add</span>{t('Add client')}</Link></div>
       </div>
       <article className="table-panel">
         <div className="table-scroll">

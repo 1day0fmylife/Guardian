@@ -169,3 +169,6 @@ p { color: var(--muted); margin-bottom: 0; line-height: 1.5; }
   .info-row > strong { text-align: left; }
 }
 .auth-lang { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.heading-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.heading-actions .link-button { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.heading-actions .link-button .material-symbols-rounded { font-size: 18px; }

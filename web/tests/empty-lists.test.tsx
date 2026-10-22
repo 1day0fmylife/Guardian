@@ -6,6 +6,7 @@ import { CommandsPage } from '../src/admin'
 import { EnrollmentsPage } from '../src/enrollments'
 import { api } from '../src/api'
 import { getLang, setLang } from '../src/i18n'
+import { renderWithRouter } from './render'
 
 function client() { return new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } }) }
 
@@ -18,7 +19,7 @@ test('a null items array from the API is normalized to an empty list', async () 
   } finally { api.defaults.adapter = old }
 })
 
-test('empty enrollments and commands pages render in Russian', () => {
+test('empty enrollments and commands pages render in Russian', async () => {
   const previous = getLang()
   setLang('ru')
   try {
@@ -27,7 +28,7 @@ test('empty enrollments and commands pages render in Russian', () => {
     c.setQueryData(['enrollments'], { items: [], total: 0, limit: 100, offset: 0 })
     c.setQueryData(['vpn-profiles'], [])
     c.setQueryData(['commands-global'], { items: [], total: 0, limit: 100, offset: 0 })
-    const enrollments = renderToStaticMarkup(<QueryClientProvider client={c}><EnrollmentsPage /></QueryClientProvider>)
+    const enrollments = await renderWithRouter(c, () => <EnrollmentsPage />)
     expect(enrollments).toContain('Регистрации ещё не выдавались.')
     expect(enrollments).toContain('Выдать регистрацию')
     const commands = renderToStaticMarkup(<QueryClientProvider client={c}><CommandsPage /></QueryClientProvider>)

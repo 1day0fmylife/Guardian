@@ -1,0 +1,31 @@
+.wizard-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.wizard-steps li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 500; min-width: 0; }
+.wizard-steps li > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wizard-steps li.current { border-color: var(--primary); color: var(--text); }
+.wizard-steps li.done { color: var(--success); }
+.wizard-step-number { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; border: 1px solid currentColor; font-size: 12px; }
+.wizard-step-number .material-symbols-rounded { font-size: 16px; }
+.wizard-steps li.current .wizard-step-number { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+
+.wizard-panel { display: grid; gap: 18px; max-width: 880px; }
+.wizard-panel h2 { margin: 0 0 4px; }
+.wizard-panel p { margin: 0; color: var(--muted); }
+.wizard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.wizard-grid .field-span-2 { grid-column: 1 / -1; }
+.wizard-modes { display: flex; flex-wrap: wrap; gap: 10px; }
+.wizard-mode { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; font-size: 14px; }
+.wizard-mode.selected { border-color: var(--primary); }
+.wizard-mode:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.wizard-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.wizard-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 20px; margin: 0; }
+.wizard-summary dt { color: var(--muted); font-size: 13px; }
+.wizard-summary dd { margin: 0; overflow-wrap: anywhere; }
+.wizard-instructions { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.wizard-waiting { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.wizard-waiting .spin { animation: wizard-spin 1s linear infinite; }
+@keyframes wizard-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .wizard-waiting .spin { animation: none; } }
+@media (max-width: 720px) {
+  .wizard-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wizard-grid { grid-template-columns: 1fr; }
+}

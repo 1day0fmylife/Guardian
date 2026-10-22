@@ -15,6 +15,7 @@ import { clearSession, getMe, listDevices, logout } from './api'
 import { AuditPage, CommandsPage, RolesPage, SettingsPage, UsersPage } from './admin'
 import { DeviceDetailPage, DevicesPage } from './devices'
 import { EnrollmentsPage } from './enrollments'
+import { ClientWizardPage } from './client-wizard'
 import { t, useLang } from './i18n'
 import { LanguageSelect } from './language-select'
 import { AddressPoolsPage, VPNProfilesPage } from './network-config'
@@ -33,6 +34,7 @@ const queryClient = new QueryClient({
 const navigation = [
   { icon: 'dashboard', label: 'Dashboard', to: '/', permission: '' },
   { icon: 'devices', label: 'Devices', to: '/devices', permission: 'devices.read' },
+  { icon: 'person_add', label: 'Add client', to: '/clients/new', permission: 'enrollment.create' },
   { icon: 'qr_code_2', label: 'Enrollments', to: '/enrollments', permission: 'enrollment.read' },
   { icon: 'vpn_key', label: 'VPN Profiles', to: '/vpn-profiles', permission: 'profiles.read' },
   { icon: 'lan', label: 'Address Pools', to: '/address-pools', permission: 'pools.read' },
@@ -49,6 +51,7 @@ function Root() {
 
 function pageTitle(pathname: string) {
   if (pathname.startsWith('/devices')) return t('Devices')
+  if (pathname.startsWith('/clients/new')) return t('Add client')
   if (pathname.startsWith('/enrollments')) return t('Enrollments')
   if (pathname.startsWith('/vpn-profiles')) return t('VPN Profiles')
   if (pathname.startsWith('/address-pools')) return t('Address Pools')
@@ -178,13 +181,14 @@ const deviceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/devic
 const enrollmentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/enrollments', component: EnrollmentsPage })
 const vpnProfilesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vpn-profiles', component: VPNProfilesPage })
 const addressPoolsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/address-pools', component: AddressPoolsPage })
+const clientWizardRoute = createRoute({ getParentRoute: () => rootRoute, path: '/clients/new', component: ClientWizardPage })
 const accountRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account', component: AccountPage })
 const commandsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/commands', component: CommandsPage })
 const usersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/users', component: UsersPage })
 const rolesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/roles', component: RolesPage })
 const auditRoute = createRoute({ getParentRoute: () => rootRoute, path: '/audit', component: AuditPage })
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsPage })
-const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, vpnProfilesRoute, addressPoolsRoute, accountRoute, commandsRoute, usersRoute, rolesRoute, auditRoute, settingsRoute])
+const routeTree = rootRoute.addChildren([indexRoute, devicesRoute, deviceRoute, enrollmentsRoute, clientWizardRoute, vpnProfilesRoute, addressPoolsRoute, accountRoute, commandsRoute, usersRoute, rolesRoute, auditRoute, settingsRoute])
 const router = createRouter({ routeTree })
 
 // Remounting the router on a language change re-renders every page with the

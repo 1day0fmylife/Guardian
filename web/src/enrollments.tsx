@@ -1,6 +1,7 @@
 import React from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { getMe } from './api'
+import { Link } from '@tanstack/react-router'
 import { intlLocale, t } from './i18n'
 import './services.css'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -94,7 +95,7 @@ export function EnrollmentsPage() {
     <section className="page-stack">
       <div className="section-heading">
         <div><div className="eyebrow">{t('Provisioning')}</div><h2>{t('Enrollments')}</h2><p>{t('Issue short-lived, single-use enrollment credentials for ArlanPhone devices.')}</p></div>
-        {enrollments.data && <span className="count-chip">{t('Issued: {count}', { count: enrollments.data.total })}</span>}
+        <div className="heading-actions">{enrollments.data && <span className="count-chip">{t('Issued: {count}', { count: enrollments.data.total })}</span>}{canCreate && <Link className="primary-button link-button" to="/clients/new"><span className="material-symbols-rounded" aria-hidden="true">person_add</span>{t('Add client')}</Link>}</div>
       </div>
 
       <div className="enrollment-layout">
@@ -145,7 +146,7 @@ export function EnrollmentsPage() {
   )
 }
 
-function IssuedEnrollmentCard({ issued, dismiss }: { issued: IssuedEnrollment | null; dismiss: () => void }) {
+export function IssuedEnrollmentCard({ issued, dismiss }: { issued: IssuedEnrollment | null; dismiss: () => void }) {
   const [copyError, setCopyError] = React.useState('')
   const [copied, setCopied] = React.useState('')
   React.useEffect(() => setCopied(''), [issued])
