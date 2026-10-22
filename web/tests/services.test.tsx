@@ -48,24 +48,27 @@ test('catalog update explicitly excludes response-only and secret fields', async
 })
 
 import { EnrollmentsPage } from '../src/enrollments'
+import { renderWithRouter } from './render'
 function renderEnrollments(permissions: string[]) {
  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
  client.setQueryData(['me'], { permissions })
  client.setQueryData(['enrollments'], { items: [{ id: 'e1', name: 'Active', profile_id: 'p1', expires_at: '2099-01-01T00:00:00Z', created_at: '2026-10-10T00:00:00Z' }], total: 1 })
  client.setQueryData(['vpn-profiles'], [])
- return renderToStaticMarkup(<QueryClientProvider client={client}><EnrollmentsPage /></QueryClientProvider>)
+ return renderWithRouter(client, () => <EnrollmentsPage />)
 }
-test('read-only enrollment roles cannot issue or revoke tokens', () => {
- const html = renderEnrollments(['enrollment.read'])
+test('read-only enrollment roles cannot issue or revoke tokens', async () => {
+ const html = await renderEnrollments(['enrollment.read'])
+ expect(html).not.toContain('Add client')
  expect(html).not.toContain('Issue enrollment')
  expect(html).not.toContain('>Revoke</button>')
  expect(html).not.toContain('Provisioning output')
 })
-test('enrollment create and revoke permissions are independent', () => {
- const create = renderEnrollments(['enrollment.read', 'enrollment.create', 'profiles.read'])
+test('enrollment create and revoke permissions are independent', async () => {
+ const create = await renderEnrollments(['enrollment.read', 'enrollment.create', 'profiles.read'])
+ expect(create).toContain('Add client')
  expect(create).toContain('Issue enrollment')
  expect(create).not.toContain('>Revoke</button>')
- const revoke = renderEnrollments(['enrollment.read', 'enrollment.revoke'])
+ const revoke = await renderEnrollments(['enrollment.read', 'enrollment.revoke'])
  expect(revoke).not.toContain('Issue enrollment')
  expect(revoke).toContain('>Revoke</button>')
 })

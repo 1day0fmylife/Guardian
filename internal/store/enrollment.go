@@ -117,7 +117,7 @@ func (s *Store) ListEnrollments(ctx context.Context, limit, offset int) ([]domai
 	}
 	defer rows.Close()
 
-	var result []domain.Enrollment
+	result := []domain.Enrollment{}
 	for rows.Next() {
 		var item domain.Enrollment
 		var consumed, revoked sql.NullString

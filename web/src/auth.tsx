@@ -14,13 +14,15 @@ import {
   logout,
   saveSession,
 } from './api'
+import { t } from './i18n'
+import { LanguageSelect } from './language-select'
 
 function errorMessage(error: unknown) {
   if (axios.isAxiosError(error)) {
     const payload = error.response?.data as { error?: { message?: string } } | undefined
     return payload?.error?.message || error.message
   }
-  return error instanceof Error ? error.message : 'Request failed'
+  return error instanceof Error ? error.message : t('Request failed')
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -57,7 +59,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }, [me.error, me.isError, queryClient])
 
   if (setup.isPending || (signedIn && me.isPending)) {
-    return <AuthFrame><div className="auth-loading">Loading Guardian…</div></AuthFrame>
+    return <AuthFrame><div className="auth-loading">{t('Loading Guardian…')}</div></AuthFrame>
   }
   if (setup.isError) {
     return <AuthFrame><div className="alert danger">{errorMessage(setup.error)}</div></AuthFrame>
@@ -71,7 +73,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 function LoginForm({ bootstrapRequired, onSignedIn }: { bootstrapRequired: boolean; onSignedIn: () => void }) {
   const queryClient = useQueryClient()
   const [username, setUsername] = React.useState('')
-  const [displayName, setDisplayName] = React.useState('Administrator')
+  const [displayName, setDisplayName] = React.useState(() => t('Administrator'))
   const [password, setPassword] = React.useState('')
 
   const auth = useMutation({
@@ -93,16 +95,16 @@ function LoginForm({ bootstrapRequired, onSignedIn }: { bootstrapRequired: boole
       <form className="auth-card" onSubmit={(event) => { event.preventDefault(); if (canSubmit) auth.mutate() }}>
         <div className="auth-brand"><span className="material-symbols-rounded">shield</span>Guardian</div>
         <div>
-          <div className="eyebrow">Secure access management</div>
-          <h1>{bootstrapRequired ? 'Initialize Guardian' : 'Sign in'}</h1>
-          <p>{bootstrapRequired ? 'Create the first superadmin account. Deployments can instead set GUARDIAN_BOOTSTRAP_ADMIN_* in the environment.' : 'Use your Guardian account username and password.'}</p>
+          <div className="eyebrow">{t('Secure access management')}</div>
+          <h1>{bootstrapRequired ? t('Initialize Guardian') : t('Sign in')}</h1>
+          <p>{bootstrapRequired ? t('Create the first superadmin account. Deployments can instead set GUARDIAN_BOOTSTRAP_ADMIN_* in the environment.') : t('Use your Guardian account username and password.')}</p>
         </div>
-        <label className="field-label">Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
-        {bootstrapRequired && <label className="field-label">Display name<input autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>}
-        <label className="field-label">Password<input type="password" autoComplete={bootstrapRequired ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+        <label className="field-label">{t('Username')}<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+        {bootstrapRequired && <label className="field-label">{t('Display name')}<input autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>}
+        <label className="field-label">{t('Password')}<input type="password" autoComplete={bootstrapRequired ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         {auth.isError && <div className="alert danger">{errorMessage(auth.error)}</div>}
         <button className="primary-button" disabled={!canSubmit || auth.isPending} type="submit">
-          {auth.isPending ? 'Please wait…' : bootstrapRequired ? 'Create administrator' : 'Sign in'}
+          {auth.isPending ? t('Please wait…') : bootstrapRequired ? t('Create administrator') : t('Sign in')}
         </button>
       </form>
     </AuthFrame>
@@ -122,12 +124,12 @@ export function ForcedPasswordChange({ username }: { username: string }) {
       <div className="auth-card">
         <div className="auth-brand"><span className="material-symbols-rounded">shield</span>Guardian</div>
         <div>
-          <div className="eyebrow">Signed in as {username}</div>
-          <h1>Change your password</h1>
-          <p>Your password was issued by an administrator or deployment configuration. Choose a new personal password to continue.</p>
+          <div className="eyebrow">{t('Signed in as {username}', { username })}</div>
+          <h1>{t('Change your password')}</h1>
+          <p>{t('Your password was issued by an administrator or deployment configuration. Choose a new personal password to continue.')}</p>
         </div>
-        <ChangePasswordForm username={username} submitLabel="Change password and continue" onChanged={async () => { await queryClient.invalidateQueries({ queryKey: ['me'] }) }} />
-        <button className="secondary-button" type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()}>Sign out</button>
+        <ChangePasswordForm username={username} submitLabel={t('Change password and continue')} onChanged={async () => { await queryClient.invalidateQueries({ queryKey: ['me'] }) }} />
+        <button className="secondary-button" type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()}>{t('Sign out')}</button>
       </div>
     </AuthFrame>
   )
@@ -138,14 +140,14 @@ export const minPasswordLength = 12
 /** Client-side mirror of the server policy; the server remains authoritative. */
 export function passwordProblems(next: string, confirm: string, current: string, username: string) {
   const problems: string[] = []
-  if (next.length < minPasswordLength) problems.push(`At least ${minPasswordLength} characters`)
-  if (next && next === current) problems.push('Must differ from the current password')
-  if (next && username && next.trim().toLowerCase() === username.trim().toLowerCase()) problems.push('Must not equal the username')
-  if (confirm && next !== confirm) problems.push('Confirmation does not match')
+  if (next.length < minPasswordLength) problems.push(t('At least {count} characters', { count: minPasswordLength }))
+  if (next && next === current) problems.push(t('Must differ from the current password'))
+  if (next && username && next.trim().toLowerCase() === username.trim().toLowerCase()) problems.push(t('Must not equal the username'))
+  if (confirm && next !== confirm) problems.push(t('Confirmation does not match'))
   return problems
 }
 
-export function ChangePasswordForm({ username, submitLabel = 'Change password', onChanged }: { username: string; submitLabel?: string; onChanged: () => Promise<void> | void }) {
+export function ChangePasswordForm({ username, submitLabel = t('Change password'), onChanged }: { username: string; submitLabel?: string; onChanged: () => Promise<void> | void }) {
   const [current, setCurrent] = React.useState('')
   const [next, setNext] = React.useState('')
   const [confirm, setConfirm] = React.useState('')
@@ -158,20 +160,20 @@ export function ChangePasswordForm({ username, submitLabel = 'Change password', 
   return (
     <form className="password-form" onSubmit={(event) => { event.preventDefault(); if (canSubmit) change.mutate() }}>
       <input type="text" autoComplete="username" value={username} readOnly hidden />
-      <label className="field-label">Current password<input type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} /></label>
-      <label className="field-label">New password<input type="password" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} aria-describedby="password-policy" /></label>
-      <label className="field-label">Confirm new password<input type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
+      <label className="field-label">{t('Current password')}<input type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} /></label>
+      <label className="field-label">{t('New password')}<input type="password" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} aria-describedby="password-policy" /></label>
+      <label className="field-label">{t('Confirm new password')}<input type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
       <ul className="password-policy" id="password-policy">
-        {[`At least ${minPasswordLength} characters`, 'Must differ from the current password', 'Must not equal the username'].map((rule) => <li key={rule} className={next && problems.includes(rule) ? 'unmet' : next ? 'met' : ''}>{rule}</li>)}
-        {problems.includes('Confirmation does not match') && <li className="unmet">Confirmation does not match</li>}
+        {[t('At least {count} characters', { count: minPasswordLength }), t('Must differ from the current password'), t('Must not equal the username')].map((rule) => <li key={rule} className={next && problems.includes(rule) ? 'unmet' : next ? 'met' : ''}>{rule}</li>)}
+        {problems.includes(t('Confirmation does not match')) && <li className="unmet">{t('Confirmation does not match')}</li>}
       </ul>
       {change.isError && <div className="alert danger" role="alert">{errorMessage(change.error)}</div>}
-      {change.isSuccess && <div className="alert success" role="status">Password changed. Other sessions were signed out.</div>}
-      <button className="primary-button" disabled={!canSubmit || change.isPending} type="submit">{change.isPending ? 'Please wait…' : submitLabel}</button>
+      {change.isSuccess && <div className="alert success" role="status">{t('Password changed. Other sessions were signed out.')}</div>}
+      <button className="primary-button" disabled={!canSubmit || change.isPending} type="submit">{change.isPending ? t('Please wait…') : submitLabel}</button>
     </form>
   )
 }
 
 function AuthFrame({ children }: { children: React.ReactNode }) {
-  return <div className="auth-page"><div className="auth-wrap">{children}</div></div>
+  return <div className="auth-page"><div className="auth-wrap"><div className="auth-lang"><LanguageSelect /></div>{children}</div></div>
 }

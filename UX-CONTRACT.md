@@ -8,7 +8,9 @@ Canonical sibling flows: device actions, network configuration and enrollments.
 React Query owns server state; native labeled input/select/checkbox own field interaction;
 semantic tables own comparison, `table-scroll` owns horizontal overflow. Buttons and
 inline alerts use the existing shared CSS recipes. Dates use browser locale/timezone.
-Current UI language is English; there is no RU/KK/EN localization provider.
+UI languages: English, Russian, Kazakh (`web/src/i18n.ts`, dictionaries in `web/src/locales`).
+English text is the message key; the top-bar/sign-in switcher remembers the choice and dates follow it.
+`tests/i18n.test.ts` fails when a `t('…')` string lacks a ru or kk translation. Server error messages stay English.
 
 Service policy and catalog require services.read; changes require services.manage.
 Audit requires audit.read independently. Enrollment creation and revocation are separately

@@ -28,6 +28,8 @@ export type SystemSettings = { values: Record<string, string>; public_url: strin
 
 export const api = axios.create({ baseURL: '/api/v1', timeout: 10_000 })
 api.interceptors.request.use((config) => { const token = sessionStorage.getItem(sessionTokenKey); if (token) config.headers.Authorization = `Bearer ${token}`; return config })
+// Collection endpoints always carry an `items` array; treat a null from older servers as empty.
+api.interceptors.response.use((response) => { const body = response.data as { items?: unknown } | null; if (body && typeof body === 'object' && 'items' in body && body.items == null) body.items = []; return response })
 
 export function saveSession(token: string) { sessionStorage.setItem(sessionTokenKey, token) }
 export function clearSession() { sessionStorage.removeItem(sessionTokenKey) }

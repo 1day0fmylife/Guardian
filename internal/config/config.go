@@ -28,7 +28,14 @@ type Config struct {
 	// DeviceTrustBundleFile is served to devices as the service CA trust
 	// bundle (CA rollover with cross-certificates). Empty: no bundle.
 	DeviceTrustBundleFile string
+	// DefaultAddressPool is the tunnel CIDR seeded when the database has no
+	// address pools. Empty disables seeding.
+	DefaultAddressPool string
 }
+
+// DefaultAddressPoolCIDR gives 1,024 addresses: enough for the initial
+// ~1,000-device target plus the gateway.
+const DefaultAddressPoolCIDR = "10.88.0.0/22"
 
 // BootstrapAdmin describes the first superadmin created on an empty database.
 // Password is a secret: never log it or include it in errors.
@@ -88,12 +95,24 @@ func Load() (Config, error) {
 	if err != nil || age < 0 || (age > 0 && (age < 24*time.Hour || age > 3650*24*time.Hour)) {
 		return Config{}, fmt.Errorf("GUARDIAN_TELEMETRY_RETENTION_AGE must be 0s (disabled) or between 24h and 87600h")
 	}
+	defaultPool := env("GUARDIAN_DEFAULT_ADDRESS_POOL", DefaultAddressPoolCIDR)
+	if strings.EqualFold(defaultPool, "off") {
+		defaultPool = ""
+	}
+	if defaultPool != "" {
+		prefix, err := netip.ParsePrefix(defaultPool)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() < 16 || prefix.Bits() > 30 {
+			return Config{}, fmt.Errorf("GUARDIAN_DEFAULT_ADDRESS_POOL must be an IPv4 CIDR between /16 and /30, or off")
+		}
+		defaultPool = prefix.Masked().String()
+	}
 	bootstrapAdmin, err := loadBootstrapAdmin()
 	if err != nil {
 		return Config{}, err
 	}
 	cfg := Config{
 		BootstrapAdmin:              bootstrapAdmin,
+		DefaultAddressPool:          defaultPool,
 		MetricsListenAddr:           metricsAddr,
 		GatewayProbeAddress:         probe,
 		TelemetryRetentionAge:       age,

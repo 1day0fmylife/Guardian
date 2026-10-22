@@ -199,7 +199,7 @@ func (s *Store) distinctPermissions(ctx context.Context, query string, args ...a
 		return nil, fmt.Errorf("list permissions: %w", err)
 	}
 	defer rows.Close()
-	var result []string
+	result := []string{}
 	for rows.Next() {
 		var value string
 		if err := rows.Scan(&value); err != nil {
@@ -269,7 +269,7 @@ func (s *Store) userRoles(ctx context.Context, userID string) ([]string, error) 
 		return nil, fmt.Errorf("list user roles: %w", err)
 	}
 	defer rows.Close()
-	var roles []string
+	roles := []string{}
 	for rows.Next() {
 		var role string
 		if err := rows.Scan(&role); err != nil {
@@ -397,7 +397,7 @@ func (s *Store) ListRoles(ctx context.Context) ([]AdminRole, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list roles: %w", err)
 	}
-	var roles []AdminRole
+	roles := []AdminRole{}
 	for rows.Next() {
 		var role AdminRole
 		var system int
@@ -431,7 +431,7 @@ func (s *Store) rolePermissions(ctx context.Context, roleID string) ([]string, e
 		return nil, fmt.Errorf("list role permissions: %w", err)
 	}
 	defer rows.Close()
-	var result []string
+	result := []string{}
 	for rows.Next() {
 		var value string
 		if err := rows.Scan(&value); err != nil {
@@ -518,7 +518,7 @@ func (s *Store) ListPermissions(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var values []string
+	values := []string{}
 	for rows.Next() {
 		var value string
 		if err := rows.Scan(&value); err != nil {
@@ -554,7 +554,7 @@ func (s *Store) listAuditEvents(ctx context.Context, where string, args []any, l
 		return nil, 0, err
 	}
 	defer rows.Close()
-	var events []domain.AuditEvent
+	events := []domain.AuditEvent{}
 	for rows.Next() {
 		var event domain.AuditEvent
 		if err := rows.Scan(&event.ID, &event.ActorUserID, &event.Action, &event.ResourceType, &event.ResourceID, &event.SourceIP, &event.RequestID, &event.Details, &event.CreatedAt); err != nil {
@@ -575,7 +575,7 @@ func (s *Store) ListAllDeviceCommands(ctx context.Context, limit, offset int) ([
 		return nil, 0, err
 	}
 	defer rows.Close()
-	var result []GlobalDeviceCommand
+	result := []GlobalDeviceCommand{}
 	for rows.Next() {
 		var item GlobalDeviceCommand
 		var payload, commandResult string
