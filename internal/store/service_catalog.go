@@ -780,7 +780,7 @@ func (s *Store) evaluateDevicePolicy(ctx context.Context, deviceID string) (eval
 		return out, err
 	}
 
-	var grants []domain.ServiceGrant
+	grants := []domain.ServiceGrant{}
 	if active {
 		conditions := []string{"(scope_type = 'device' AND scope_id = ?)"}
 		args := []any{deviceID}

@@ -96,7 +96,7 @@ function renderUsers(permissions: string[]) {
 
 test('users table is server-paginated with status, filters and sortable headers', () => {
  const html = renderUsers(['users.read'])
- expect(html).toContain('60 users')
+ expect(html).toContain('Users: 60')
  expect(html).toContain('1–25 of 60')
  expect(html).toContain('Page 1 of 3')
  expect(html).toContain('Password change pending')

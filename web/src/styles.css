@@ -67,6 +67,11 @@ h2 { margin-bottom: 8px; font-size: 19px; }
 p { color: var(--muted); margin-bottom: 0; line-height: 1.5; }
 .eyebrow { font-size: 12px; color: var(--subtle); font-weight: 500; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
 .icon-button { width: 40px; height: 40px; border: 1px solid var(--border); color: var(--text); background: var(--surface); border-radius: 9px; display: grid; place-items: center; cursor: pointer; }
+.lang-select { height: 40px; border: 1px solid var(--border); color: var(--text); background: var(--surface); border-radius: 9px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; }
+.lang-select .material-symbols-rounded { font-size: 20px; color: var(--muted); }
+.lang-select select { border: 0; background: transparent; color: inherit; font: inherit; font-size: 14px; padding: 0 2px; height: 100%; cursor: pointer; }
+.lang-select select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 6px; }
+.lang-select:focus-within { border-color: var(--muted); }
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
 .card, .panel, .table-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
 .card { padding: 18px; min-height: 132px; }
@@ -163,3 +168,4 @@ p { color: var(--muted); margin-bottom: 0; line-height: 1.5; }
   .info-row { grid-template-columns: 1fr; gap: 4px; padding: 10px 0; }
   .info-row > strong { text-align: left; }
 }
+.auth-lang { display: flex; justify-content: flex-end; margin-bottom: 12px; }

@@ -162,7 +162,7 @@ func (s *Store) ServiceAccessSnapshot(ctx context.Context) (ServiceAccessSnapsho
 	}
 	mrows.Close()
 
-	var grants []domain.ServiceGrant
+	grants := []domain.ServiceGrant{}
 	grows, err := tx.QueryContext(ctx, "SELECT "+serviceGrantColumns+" FROM service_grants WHERE revoked_at IS NULL")
 	if err != nil {
 		return snap, fmt.Errorf("list active grants: %w", err)

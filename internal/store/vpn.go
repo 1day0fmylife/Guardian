@@ -113,7 +113,7 @@ func (s *Store) ListAddressPools(ctx context.Context) ([]domain.AddressPool, err
 	}
 	defer rows.Close()
 
-	var pools []domain.AddressPool
+	pools := []domain.AddressPool{}
 	for rows.Next() {
 		var p domain.AddressPool
 		var dns string
@@ -269,7 +269,7 @@ func (s *Store) ListVPNProfiles(ctx context.Context) ([]domain.VPNProfile, error
 	}
 	defer rows.Close()
 
-	var profiles []domain.VPNProfile
+	profiles := []domain.VPNProfile{}
 	for rows.Next() {
 		p, err := scanVPNProfile(rows.Scan)
 		if err != nil {

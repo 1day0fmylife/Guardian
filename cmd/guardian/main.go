@@ -61,6 +61,16 @@ func main() {
 		logger.Error("bootstrap administrator", "error", err)
 		os.Exit(1)
 	}
+	if cfg.DefaultAddressPool != "" {
+		created, err := st.EnsureDefaultAddressPool(startupCtx, cfg.DefaultAddressPool)
+		if err != nil {
+			logger.Error("seed default address pool", "error", err)
+			os.Exit(1)
+		}
+		if created {
+			logger.Info("created default address pool", "cidr", cfg.DefaultAddressPool)
+		}
+	}
 
 	if cfg.ServiceACLRequired {
 		if err := st.RequireServiceACLAcknowledgement(startupCtx); err != nil {
